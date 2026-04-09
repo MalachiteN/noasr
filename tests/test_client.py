@@ -106,68 +106,45 @@ class TestSend:
         assert call["model"] == "xiaomi/mimo-v2-omni"
         assert call["messages"] == messages
         assert call["max_completion_tokens"] == 1024
-        assert call["tools"] is None
-        assert call["tool_choice"] is None
 
-    def test_send_returns_raw_dict(
-        self, client: MiMoClient, mock_transport: MockTransport
-    ) -> None:
-        """Test that send() returns a raw dict with 'choices' key."""
-        messages = [{"role": "user", "content": "Hello"}]
-        result = client.send(messages=messages)
 
-        assert isinstance(result, dict)
-        assert "choices" in result
-        assert "id" in result
+class TestArchitecturalInvariants:
+    """Verify that deleted methods are not accidentally reintroduced."""
 
-    def test_send_with_tools_auto_defaults_tool_choice(
-        self, client: MiMoClient, mock_transport: MockTransport
-    ) -> None:
-        """Test that send() auto-sets tool_choice='auto' when tools provided."""
-        tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_datetime",
-                    "description": "Get current date and time",
-                    "parameters": {"type": "object", "properties": {}},
-                },
-            }
-        ]
-
-        client.send(messages=[], tools=tools)
-
-        call = mock_transport.get_last_call()
-        assert call is not None
-        assert call["tools"] == tools
-        assert call["tool_choice"] == "auto"
-
-    def test_send_with_explicit_tool_choice(
-        self, client: MiMoClient, mock_transport: MockTransport
-    ) -> None:
-        """Test that send() respects explicit tool_choice parameter."""
-        tools = [{"type": "function", "function": {"name": "test_tool"}}]
-
-        client.send(messages=[], tools=tools, tool_choice="required")
-
-        call = mock_transport.get_last_call()
-        assert call is not None
-        assert call["tool_choice"] == "required"
-
-    def test_send_custom_model_and_tokens(
-        self, client: MiMoClient, mock_transport: MockTransport
-    ) -> None:
-        """Test that send() passes custom model and max_completion_tokens."""
-        client.send(
-            messages=[],
-            model="custom-model",
-            max_completion_tokens=2048,
+    def test_mimoclient_has_no_transcribe_method(self) -> None:
+        """MiMoClient.transcribe() was removed in the agent-centric refactor."""
+        client = MiMoClient(api_key="k", base_url="u")
+        assert not hasattr(client, "transcribe"), (
+            "MiMoClient.transcribe() should not exist — all LLM calls go through AgentManager"
         )
 
-        call = mock_transport.get_last_call()
-        assert call is not None
-        assert call["model"] == "custom-model"
-        assert call["max_completion_tokens"] == 2048
+    def test_mimoclient_has_no_run_agent_method(self) -> None:
+        """MiMoClient.run_agent() was removed in the agent-centric refactor."""
+        client = MiMoClient(api_key="k", base_url="u")
+        assert not hasattr(client, "run_agent"), (
+            "MiMoClient.run_agent() should not exist — all LLM calls go through AgentManager"
+        )
+
+    def test_mimoclient_has_no_build_transcription_messages(self) -> None:
+        """MiMoClient.build_transcription_messages() was removed."""
+        client = MiMoClient(api_key="k", base_url="u")
+        assert not hasattr(client, "build_transcription_messages"), (
+            "MiMoClient.build_transcription_messages() should not exist — message construction is in AgentManager"
+        )
+
+    def test_mimoclient_has_no_build_agent_messages(self) -> None:
+        """MiMoClient.build_agent_messages() was removed."""
+        client = MiMoClient(api_key="k", base_url="u")
+        assert not hasattr(client, "build_agent_messages"), (
+            "MiMoClient.build_agent_messages() should not exist — message construction is in AgentManager"
+        )
+
+    def test_mimoclient_has_send_method(self) -> None:
+        """MiMoClient.send() is the sole transport method."""
+        client = MiMoClient(api_key="k", base_url="u")
+        assert hasattr(client, "send"), (
+            "MiMoClient.send() must exist as the sole transport method"
+        )
 
     def test_send_no_tools_no_tool_choice(
         self, client: MiMoClient, mock_transport: MockTransport

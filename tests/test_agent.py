@@ -312,3 +312,121 @@ class TestRunAgent:
             result = mgr.run_agent("test_agent", self.AUDIO_DATA_URI, mock_client)
 
         assert result == "Done with all tools"
+
+
+class TestAgentMessageConstruction:
+    """Verify that AgentManager.run_agent() constructs messages from prompts + audio."""
+
+    AUDIO_DATA_URI = "data:audio/wav;base64,AAAA"
+
+    def test_run_agent_builds_messages_from_prompts_and_audio(self) -> None:
+        """run_agent should construct system + user messages using load_agent_prompts."""
+        ToolManager._instance = None
+        ToolManager._initialized = False
+
+        mgr = AgentManager()
+        config = AgentConfig(
+            name="test_agent",
+            trigger=[62, 62],
+            toolsets=[],
+            system_prompt_file="custom_system.md",
+            user_prompt_file="custom_user.md",
+        )
+        mgr.register(AgentType(config))
+
+        mock_client = mock.MagicMock()
+        mock_client.send.return_value = {
+            "choices": [{"message": {"content": "transcribed text"}}]
+        }
+
+        with mock.patch(
+            "noasr.agent.load_agent_prompts",
+            return_value=("You are a helpful assistant", "Transcribe this audio"),
+        ) as mock_load_prompts:
+            result = mgr.run_agent("test_agent", self.AUDIO_DATA_URI, mock_client)
+
+        # Verify load_agent_prompts was called with agent config's file names
+        mock_load_prompts.assert_called_once_with(
+            system_prompt_file="custom_system.md",
+            user_prompt_file="custom_user.md",
+        )
+
+        # Verify client.send was called with properly constructed messages
+        call_args = mock_client.send.call_args
+        messages = (
+            call_args.kwargs.get("messages")
+            or call_args[1].get("messages")
+            or call_args[0][0]
+        )
+
+        # System message
+        assert messages[0] == {
+            "role": "system",
+            "content": "You are a helpful assistant",
+        }
+
+        # User message with audio + text
+        user_msg = messages[1]
+        assert user_msg["role"] == "user"
+        content = user_msg["content"]
+        assert isinstance(content, list)
+        assert content[0]["type"] == "input_audio"
+        assert content[0]["input_audio"]["data"] == self.AUDIO_DATA_URI
+        assert content[1]["type"] == "text"
+        assert content[1]["text"] == "Transcribe this audio"
+
+        assert result == "transcribed text"
+
+    def test_run_agent_omits_system_message_when_empty(self) -> None:
+        """run_agent should skip system message when prompt is empty."""
+        ToolManager._instance = None
+        ToolManager._initialized = False
+
+        mgr = AgentManager()
+        mgr.register(
+            AgentType(AgentConfig(name="test_agent", trigger=[62, 62], toolsets=[]))
+        )
+
+        mock_client = mock.MagicMock()
+        mock_client.send.return_value = {
+            "choices": [{"message": {"content": "result"}}]
+        }
+
+        with mock.patch(
+            "noasr.agent.load_agent_prompts", return_value=("", "user prompt")
+        ):
+            mgr.run_agent("test_agent", self.AUDIO_DATA_URI, mock_client)
+
+        call_args = mock_client.send.call_args
+        messages = call_args.kwargs.get("messages") or call_args[0][0]
+
+        # No system message — first message should be user
+        assert messages[0]["role"] == "user"
+
+    def test_run_agent_omits_user_text_when_empty(self) -> None:
+        """run_agent should skip user text prompt when empty."""
+        ToolManager._instance = None
+        ToolManager._initialized = False
+
+        mgr = AgentManager()
+        mgr.register(
+            AgentType(AgentConfig(name="test_agent", trigger=[62, 62], toolsets=[]))
+        )
+
+        mock_client = mock.MagicMock()
+        mock_client.send.return_value = {
+            "choices": [{"message": {"content": "result"}}]
+        }
+
+        with mock.patch(
+            "noasr.agent.load_agent_prompts", return_value=("system prompt", "")
+        ):
+            mgr.run_agent("test_agent", self.AUDIO_DATA_URI, mock_client)
+
+        call_args = mock_client.send.call_args
+        messages = call_args.kwargs.get("messages") or call_args[0][0]
+
+        # User content should have only audio, no text
+        user_content = messages[1]["content"]
+        assert len(user_content) == 1
+        assert user_content[0]["type"] == "input_audio"

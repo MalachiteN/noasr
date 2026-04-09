@@ -128,6 +128,8 @@ class TestAgentManager:
 class TestRunAgent:
     """Test the ReAct loop in run_agent."""
 
+    AUDIO_DATA_URI = "data:audio/wav;base64,AAAA"
+
     def _make_manager(self) -> AgentManager:
         """Create an AgentManager with a registered agent."""
         ToolManager._instance = None
@@ -179,9 +181,10 @@ class TestRunAgent:
             ]
         }
 
-        result = mgr.run_agent(
-            "test_agent", [{"role": "user", "content": "hi"}], mock_client
-        )
+        with mock.patch(
+            "noasr.agent.load_agent_prompts", return_value=("sys prompt", "user prompt")
+        ):
+            result = mgr.run_agent("test_agent", self.AUDIO_DATA_URI, mock_client)
 
         assert result == "Hello world"
 
@@ -227,9 +230,10 @@ class TestRunAgent:
             },
         ]
 
-        result = mgr.run_agent(
-            "test_agent", [{"role": "user", "content": "hi"}], mock_client
-        )
+        with mock.patch(
+            "noasr.agent.load_agent_prompts", return_value=("sys prompt", "user prompt")
+        ):
+            result = mgr.run_agent("test_agent", self.AUDIO_DATA_URI, mock_client)
 
         assert result == "Final answer after tool call"
         assert mock_client.send.call_count == 2
@@ -237,10 +241,9 @@ class TestRunAgent:
     def test_run_agent_unknown_agent(self) -> None:
         """Test run_agent with non-existent agent name."""
         mgr = AgentManager()
-        result = mgr.run_agent("nonexistent", [], mock.MagicMock())
+        result = mgr.run_agent("nonexistent", self.AUDIO_DATA_URI, mock.MagicMock())
 
-        assert "Error" in result
-        assert "nonexistent" in result
+        assert result == ""
 
     def test_run_agent_empty_choices(self) -> None:
         """Test run_agent when response has empty choices."""
@@ -249,9 +252,10 @@ class TestRunAgent:
         mock_client = mock.MagicMock()
         mock_client.send.return_value = {"choices": []}
 
-        result = mgr.run_agent(
-            "test_agent", [{"role": "user", "content": "hi"}], mock_client
-        )
+        with mock.patch(
+            "noasr.agent.load_agent_prompts", return_value=("sys prompt", "user prompt")
+        ):
+            result = mgr.run_agent("test_agent", self.AUDIO_DATA_URI, mock_client)
 
         assert result == ""
 
@@ -302,8 +306,9 @@ class TestRunAgent:
             },
         ]
 
-        result = mgr.run_agent(
-            "test_agent", [{"role": "user", "content": "hi"}], mock_client
-        )
+        with mock.patch(
+            "noasr.agent.load_agent_prompts", return_value=("sys prompt", "user prompt")
+        ):
+            result = mgr.run_agent("test_agent", self.AUDIO_DATA_URI, mock_client)
 
         assert result == "Done with all tools"

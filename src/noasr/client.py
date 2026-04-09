@@ -1,4 +1,8 @@
-"""MiMo client wrapper for OpenAI-compatible API."""
+"""MiMo client wrapper for OpenAI-compatible API.
+
+MiMoClient is a thin transport layer with a single send() method.
+All message construction is handled by AgentManager.
+"""
 
 import json
 import sys
@@ -6,8 +10,6 @@ from typing import Any, Protocol
 
 from openai import OpenAI
 from openai.types.chat import ChatCompletion
-
-from noasr.models import MiMoRequest, MiMoResponse, AudioPayload
 
 
 class MiMoTransport(Protocol):
@@ -36,10 +38,6 @@ class OpenAiTransport:
             base_url: Base URL for API endpoint (corrected from api_key in example).
         """
         # Note: The original MiMo example had these swapped - this corrects it.
-        # Original: api_key=os.environ.get("OPENAI_BASEURL")
-        #           base_url=os.environ.get("OPENAI_API_KEY")
-        # Correct:  api_key should be the actual API key
-        #           base_url should be the endpoint URL
         self._client = OpenAI(api_key=api_key, base_url=base_url)
 
     def create_completion(
@@ -65,7 +63,11 @@ class OpenAiTransport:
 
 
 class MiMoClient:
-    """MiMo API client wrapper."""
+    """MiMo API client — thin transport wrapper.
+
+    All message construction and ReAct loop logic lives in AgentManager.
+    This class only handles the raw HTTP transport and logging.
+    """
 
     def __init__(
         self,
@@ -79,10 +81,7 @@ class MiMoClient:
             api_key: API key for authentication.
             base_url: Base URL for API endpoint.
             transport: Optional transport implementation for testing.
-                      If not provided, uses OpenAiTransport.
         """
-        self._api_key = api_key
-        self._base_url = base_url
         self._transport = transport or OpenAiTransport(api_key, base_url)
 
     def _log_request(self, request_dict: dict[str, Any]) -> None:
@@ -99,230 +98,50 @@ class MiMoClient:
         """Log response JSON to stderr."""
         print(f"[MiMo RESPONSE] {response_json}", file=sys.stderr, flush=True)
 
-    def build_transcription_messages(
+    def send(
         self,
-        system_prompt: str,
-        user_prompt: str,
-        audio_data_uri: str,
-    ) -> list[dict[str, Any]]:
-        """Build messages for plain transcription mode.
-
-        Args:
-            system_prompt: System prompt text.
-            user_prompt: User prompt text.
-            audio_data_uri: Base64 data URI for audio.
-
-        Returns:
-            List of message dicts: 1 system + 1 user (multimodal).
-        """
-        messages: list[dict[str, Any]] = []
-
-        # System message
-        if system_prompt:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": system_prompt,
-                }
-            )
-
-        # User message with audio and text
-        user_content: list[dict[str, Any]] = []
-
-        # Audio input
-        user_content.append(
-            {
-                "type": "input_audio",
-                "input_audio": {
-                    "data": audio_data_uri,
-                },
-            }
-        )
-
-        # Text prompt
-        if user_prompt:
-            user_content.append(
-                {
-                    "type": "text",
-                    "text": user_prompt,
-                }
-            )
-
-        messages.append(
-            {
-                "role": "user",
-                "content": user_content,
-            }
-        )
-
-        return messages
-
-    def build_agent_messages(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-        audio_data_uri: str,
-        conversation_history: list[dict[str, Any]] | None = None,
-    ) -> list[dict[str, Any]]:
-        """Build messages for agent mode with tool support.
-
-        Args:
-            system_prompt: System prompt text.
-            user_prompt: User prompt text.
-            audio_data_uri: Base64 data URI for audio.
-            conversation_history: Optional conversation history for multi-round.
-
-        Returns:
-            List of message dicts for the conversation.
-        """
-        # Start with history if provided
-        messages = list(conversation_history) if conversation_history else []
-
-        # If no history, add the initial messages
-        if not messages:
-            # System message
-            if system_prompt:
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": system_prompt,
-                    }
-                )
-
-            # User message with audio and text
-            user_content: list[dict[str, Any]] = []
-
-            # Audio input
-            user_content.append(
-                {
-                    "type": "input_audio",
-                    "input_audio": {
-                        "data": audio_data_uri,
-                    },
-                }
-            )
-
-            # Text prompt
-            if user_prompt:
-                user_content.append(
-                    {
-                        "type": "text",
-                        "text": user_prompt,
-                    }
-                )
-
-            messages.append(
-                {
-                    "role": "user",
-                    "content": user_content,
-                }
-            )
-
-        return messages
-
-    def transcribe(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-        audio_data_uri: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
         model: str = "xiaomi/mimo-v2-omni",
         max_completion_tokens: int = 1024,
-    ) -> MiMoResponse:
-        """Send transcription request without tools.
+    ) -> dict[str, Any]:
+        """Send a chat completion request and return raw response dict.
 
         Args:
-            system_prompt: System prompt text.
-            user_prompt: User prompt text.
-            audio_data_uri: Base64 data URI for audio.
+            messages: Conversation messages.
+            tools: Optional tool definitions.
+            tool_choice: Optional tool choice strategy.
             model: Model identifier.
             max_completion_tokens: Maximum tokens to generate.
 
         Returns:
-            MiMoResponse with the transcription result.
+            Raw response dict with 'choices' key.
         """
-        messages = self.build_transcription_messages(
-            system_prompt, user_prompt, audio_data_uri
-        )
-
-        request = MiMoRequest(
-            model=model,
-            messages=messages,
-            max_completion_tokens=max_completion_tokens,
-        )
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "max_completion_tokens": max_completion_tokens,
+        }
+        if tools is not None:
+            kwargs["tools"] = tools
+        if tool_choice is None and tools is not None:
+            kwargs["tool_choice"] = "auto"
+        elif tool_choice is not None:
+            kwargs["tool_choice"] = tool_choice
 
         # Log request
-        self._log_request(request.to_dict())
+        self._log_request(kwargs)
 
         # Make request
-        completion = self._transport.create_completion(
-            model=model,
-            messages=messages,
-            max_completion_tokens=max_completion_tokens,
-        )
+        completion = self._transport.create_completion(**kwargs)
 
         # Log response
         response_json = completion.model_dump_json()
         self._log_response(response_json)
 
-        # Parse response
-        return MiMoResponse.from_dict(completion.model_dump())
-
-    def run_agent(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-        audio_data_uri: str,
-        tools: list[dict[str, Any]],
-        tool_choice: str = "auto",
-        model: str = "xiaomi/mimo-v2-omni",
-        max_completion_tokens: int = 1024,
-        conversation_history: list[dict[str, Any]] | None = None,
-    ) -> MiMoResponse:
-        """Send agent request with tool support.
-
-        Args:
-            system_prompt: System prompt text.
-            user_prompt: User prompt text.
-            audio_data_uri: Base64 data URI for audio.
-            tools: List of tool function definitions.
-            tool_choice: Tool choice strategy.
-            model: Model identifier.
-            max_completion_tokens: Maximum tokens to generate.
-            conversation_history: Optional conversation history.
-
-        Returns:
-            MiMoResponse with the result.
-        """
-        messages = self.build_agent_messages(
-            system_prompt, user_prompt, audio_data_uri, conversation_history
-        )
-
-        request = MiMoRequest(
-            model=model,
-            messages=messages,
-            max_completion_tokens=max_completion_tokens,
-            tools=tools,
-            tool_choice=tool_choice,
-        )
-
-        # Log request
-        self._log_request(request.to_dict())
-
-        # Make request
-        completion = self._transport.create_completion(
-            model=model,
-            messages=messages,
-            max_completion_tokens=max_completion_tokens,
-            tools=tools,
-            tool_choice=tool_choice,
-        )
-
-        # Log response
-        response_json = completion.model_dump_json()
-        self._log_response(response_json)
-
-        # Parse response
-        return MiMoResponse.from_dict(completion.model_dump())
+        # Return raw dict for caller to parse
+        return completion.model_dump()
 
 
 def create_client(

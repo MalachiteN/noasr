@@ -143,11 +143,10 @@ class TestE2EDictation:
         mocks["agent_manager"].run_agent.return_value = "Hello world"
         mocks["regex"].apply.return_value = "Hello world"
 
-        # Recorder returns valid audio
-        mocks["recorder"].stop_and_normalize.return_value = (
-            "data:audio/wav;base64,AAAA",
-            1.5,
-        )
+        # Recorder returns valid WAV bytes
+        mocks[
+            "recorder"
+        ].stop_and_normalize.return_value = b"RIFF\x00\x00\x00\x00WAVEfmt "
 
         # --- Step 1: Key down ---
         runtime._on_key_down(62)
@@ -156,9 +155,8 @@ class TestE2EDictation:
         mocks["overlay"].show_listening.assert_called_once_with(0.0)
 
         # --- Step 2: Key up ---
-        with mock.patch("noasr.main.load_system_prompt", return_value="sys"):
-            with mock.patch("noasr.main.load_user_prompt", return_value="user"):
-                runtime._on_key_up(62)
+        with mock.patch("noasr.agent.load_agent_prompts", return_value=("sys", "user")):
+            runtime._on_key_up(62)
 
         # --- Assert state transitions ---
         # After key up, should have gone LOADING → APPLYING_RESULT → IDLE
@@ -168,23 +166,12 @@ class TestE2EDictation:
         mocks["overlay"].show_loading.assert_called_once()
         mocks["overlay"].hide.assert_called()
 
-        # --- Assert client.send called with correct message structure ---
+        # --- Assert agent_manager.run_agent called with correct args ---
         mocks["agent_manager"].run_agent.assert_called_once()
         call_args = mocks["agent_manager"].run_agent.call_args
         assert call_args[0][0] == "dictate"  # agent name
-        messages = call_args[0][1]  # messages list
-        assert len(messages) == 2  # system + user
-        assert messages[0]["role"] == "system"
-        assert messages[0]["content"] == "sys"
-        assert messages[1]["role"] == "user"
-        user_content = messages[1]["content"]
-        assert isinstance(user_content, list)
-        # First item should be audio
-        assert user_content[0]["type"] == "input_audio"
-        assert "data" in user_content[0]["input_audio"]
-        # Second item should be text prompt
-        assert user_content[1]["type"] == "text"
-        assert user_content[1]["text"] == "user"
+        assert call_args[0][1].startswith("data:audio/wav;base64,")  # audio_data_uri
+        assert call_args[0][2] is mocks["client"]  # client
 
         # --- Assert regex called on response text ---
         mocks["regex"].apply.assert_called_once_with("Hello world")
@@ -279,9 +266,8 @@ class TestE2EReActToolLoop:
         runtime._active_agent = agent_manager.get_agent("dictate")
 
         # Run _process_recording
-        with mock.patch("noasr.main.load_system_prompt", return_value="sys"):
-            with mock.patch("noasr.main.load_user_prompt", return_value="user"):
-                runtime._process_recording("data:audio/wav;base64,AAAA")
+        with mock.patch("noasr.agent.load_agent_prompts", return_value=("sys", "user")):
+            runtime._process_recording("data:audio/wav;base64,AAAA")
 
         # Assert: ToolManager executed GetCurrentDateTime
         assert mock_client.send.call_count == 2
@@ -289,11 +275,7 @@ class TestE2EReActToolLoop:
         # Assert: Tool result message was appended to conversation
         # The second call to send should have messages including tool result
         second_call_args = mock_client.send.call_args_list[1]
-        messages = (
-            second_call_args[0][0]
-            if second_call_args[0]
-            else second_call_args.kwargs.get("messages", [])
-        )
+        messages = second_call_args.kwargs.get("messages", [])
         tool_messages = [m for m in messages if m.get("role") == "tool"]
         assert len(tool_messages) == 1
         assert tool_messages[0]["tool_call_id"] == "call_1"
@@ -323,12 +305,9 @@ class TestE2EErrorRecovery:
         runtime._active_agent = mock.MagicMock()
         runtime._active_agent.name = "dictate"
 
-        mocks["recorder"].stop_and_normalize.return_value = (
-            "data:audio/wav;base64,AAAA",
-            1.5,
-        )
-
-        # Make _process_recording raise an exception
+        mocks[
+            "recorder"
+        ].stop_and_normalize.return_value = b"RIFF\x00\x00\x00\x00WAVEfmt "
         with mock.patch.object(
             runtime, "_process_recording", side_effect=Exception("Network error")
         ):
@@ -339,13 +318,17 @@ class TestE2EErrorRecovery:
         assert runtime.state == RuntimeState.IDLE
 
     def test_recording_too_short_returns_to_idle(self) -> None:
-        """Recording too short (stop_and_normalize returns None) → runtime returns to IDLE."""
+        """Recording too short (stop_and_normalize raises RecordingTooShortError) → runtime returns to IDLE."""
+        from noasr.audio import RecordingTooShortError
+
         runtime, mocks = _make_runtime_with_mocks()
 
         runtime._state = RuntimeState.LISTENING
         runtime._active_agent = mock.MagicMock()
 
-        mocks["recorder"].stop_and_normalize.return_value = None
+        mocks["recorder"].stop_and_normalize.side_effect = RecordingTooShortError(
+            "Recording too short: 0.1s < 0.3s"
+        )
 
         runtime._on_key_up(62)
 
@@ -354,7 +337,7 @@ class TestE2EErrorRecovery:
         mocks["injector"].inject.assert_not_called()
 
     def test_empty_response_no_injection(self) -> None:
-        """Empty response from client → no injection occurs."""
+        """Empty response from agent_manager → no injection occurs."""
         runtime, mocks = _make_runtime_with_mocks()
 
         runtime._active_agent = mock.MagicMock()
@@ -363,9 +346,7 @@ class TestE2EErrorRecovery:
         mocks["agent_manager"].run_agent.return_value = ""
         mocks["regex"].apply.return_value = ""
 
-        with mock.patch("noasr.main.load_system_prompt", return_value=""):
-            with mock.patch("noasr.main.load_user_prompt", return_value=""):
-                runtime._process_recording("data:audio/wav;base64,AAAA")
+        runtime._process_recording("data:audio/wav;base64,AAAA")
 
         mocks["injector"].inject.assert_not_called()
 
@@ -451,11 +432,10 @@ class TestE2EMaxDuration:
         # Simulate that recording start time was long ago
         runtime._recording_start_time = time.time() - MAX_RECORDING_DURATION - 0.1
 
-        # Recorder returns valid audio
-        mocks["recorder"].stop_and_normalize.return_value = (
-            "data:audio/wav;base64,AAAA",
-            MAX_RECORDING_DURATION,
-        )
+        # Recorder returns valid WAV bytes
+        mocks[
+            "recorder"
+        ].stop_and_normalize.return_value = b"RIFF\x00\x00\x00\x00WAVEfmt "
         mocks["agent_manager"].run_agent.return_value = "Auto-stopped result"
         mocks["regex"].apply.return_value = "Auto-stopped result"
 
@@ -464,9 +444,8 @@ class TestE2EMaxDuration:
         assert elapsed >= MAX_RECORDING_DURATION
 
         # Trigger _on_key_up as the run loop would
-        with mock.patch("noasr.main.load_system_prompt", return_value=""):
-            with mock.patch("noasr.main.load_user_prompt", return_value=""):
-                runtime._on_key_up(0)
+        with mock.patch("noasr.agent.load_agent_prompts", return_value=("sys", "user")):
+            runtime._on_key_up(0)
 
         # Should have processed and returned to idle
         assert runtime.state == RuntimeState.IDLE

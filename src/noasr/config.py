@@ -19,7 +19,10 @@ def ensure_config_dir() -> Path:
 
 
 def copy_asset_if_missing(
-    asset_name: str, target_path: Path, create_empty: bool = False
+    asset_name: str,
+    target_path: Path,
+    create_empty: bool = False,
+    default_content: str | None = None,
 ) -> bool:
     """
     Copy an asset from the package to the target path if it doesn't exist.
@@ -27,7 +30,8 @@ def copy_asset_if_missing(
     Args:
         asset_name: Name of the asset file in the package
         target_path: Path to copy to
-        create_empty: If True and asset not found, create empty file instead
+        create_empty: If True and asset not found, create file with default_content
+        default_content: Content to write if creating file (defaults to empty string)
 
     Returns:
         True if file was created/copied, False if it already existed
@@ -40,7 +44,10 @@ def copy_asset_if_missing(
         content = asset_path.read_text(encoding="utf-8")
         target_path.write_text(content, encoding="utf-8")
     elif create_empty:
-        target_path.write_text("", encoding="utf-8")
+        target_path.write_text(
+            default_content if default_content is not None else "",
+            encoding="utf-8",
+        )
     else:
         raise FileNotFoundError(
             f"Asset {asset_name} not found in package and create_empty=False"
@@ -98,6 +105,89 @@ def load_regex_registry() -> dict[str, str]:
         return {}
 
 
+def _sanitize_prompt_filename(filename: str) -> str:
+    """Sanitize a prompt filename to prevent path traversal.
+
+    Only bare filenames (no path separators, no parent refs) are allowed.
+    """
+    if not filename:
+        return filename
+    # Reject absolute paths and path traversal
+    if Path(filename).is_absolute() or ".." in filename:
+        print(
+            f"Warning: Prompt filename '{filename}' rejected (path traversal), using default",
+            file=sys.stderr,
+        )
+        return (
+            "input_system_prompt.md" if "system" in filename else "input_user_prompt.md"
+        )
+    # Reject any path separator
+    if "/" in filename or "\\" in filename:
+        print(
+            f"Warning: Prompt filename '{filename}' rejected (path separator), using default",
+            file=sys.stderr,
+        )
+        return (
+            "input_system_prompt.md" if "system" in filename else "input_user_prompt.md"
+        )
+    return filename
+
+
+def load_agent_prompts(
+    system_prompt_file: str = "input_system_prompt.md",
+    user_prompt_file: str = "input_user_prompt.md",
+) -> tuple[str, str]:
+    """Load system and user prompts for an agent from ~/.noasr/.
+
+    Only bare filenames are allowed (no path separators, no ..) to prevent
+    path traversal from user-controlled config.
+
+    Args:
+        system_prompt_file: Filename of the system prompt.
+        user_prompt_file: Filename of the user prompt.
+
+    Returns:
+        Tuple of (system_prompt, user_prompt). Missing files return empty string.
+    """
+    system_prompt_file = _sanitize_prompt_filename(system_prompt_file)
+    user_prompt_file = _sanitize_prompt_filename(user_prompt_file)
+
+    system_prompt_path = DEFAULT_CONFIG_DIR / system_prompt_file
+    user_prompt_path = DEFAULT_CONFIG_DIR / user_prompt_file
+
+    system_prompt = ""
+    if system_prompt_path.exists():
+        try:
+            system_prompt = system_prompt_path.read_text(encoding="utf-8")
+        except OSError as e:
+            print(
+                f"Warning: Failed to read system prompt '{system_prompt_file}': {e}",
+                file=sys.stderr,
+            )
+    else:
+        print(
+            f"Warning: System prompt file not found: {system_prompt_path}",
+            file=sys.stderr,
+        )
+
+    user_prompt = ""
+    if user_prompt_path.exists():
+        try:
+            user_prompt = user_prompt_path.read_text(encoding="utf-8")
+        except OSError as e:
+            print(
+                f"Warning: Failed to read user prompt '{user_prompt_file}': {e}",
+                file=sys.stderr,
+            )
+    else:
+        print(
+            f"Warning: User prompt file not found: {user_prompt_path}",
+            file=sys.stderr,
+        )
+
+    return system_prompt, user_prompt
+
+
 def bootstrap_config() -> bool:
     """
     Bootstrap configuration files from package assets.
@@ -149,7 +239,10 @@ def bootstrap_config() -> bool:
 
     # Create empty regex registry
     regex_created = copy_asset_if_missing(
-        "regex.json", DEFAULT_CONFIG_DIR / "regex.json", create_empty=True
+        "regex.json",
+        DEFAULT_CONFIG_DIR / "regex.json",
+        create_empty=True,
+        default_content="{}",
     )
     if regex_created:
         created_any = True

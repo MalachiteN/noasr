@@ -1,6 +1,7 @@
 """Main entry point and runtime orchestration for noasr."""
 
 import argparse
+import base64
 import json
 import sys
 import time
@@ -11,11 +12,8 @@ from noasr.audio import AudioRecorder
 from noasr.client import MiMoClient
 from noasr.config import (
     check_and_bootstrap,
-    get_config_value,
     load_config,
     load_regex_registry,
-    load_system_prompt,
-    load_user_prompt,
 )
 from noasr.constants import MAX_RECORDING_DURATION, MIN_RECORDING_DURATION
 from noasr.hotkey import HotkeyListener
@@ -82,10 +80,17 @@ class NoasrRuntime:
             agent_config = AgentConfig.from_dict(agent_data)
             self._agent_manager.register(AgentType(agent_config))
 
+        if not self._agent_manager.list_agents():
+            print(
+                "Error: No agents configured. Edit ~/.noasr/config.json",
+                file=sys.stderr,
+            )
+            return False
+
         # Initialize MiMo client
         self._client = MiMoClient(
-            baseurl=self._config.baseurl,
             api_key=self._config.api_key,
+            base_url=self._config.baseurl,
         )
 
         # Initialize audio recorder
@@ -133,8 +138,11 @@ class NoasrRuntime:
             self._active_agent = None
             return
 
-        # Show overlay
-        self._overlay.show_listening(0.0)
+        # Show overlay (non-fatal if it fails)
+        try:
+            self._overlay.show_listening(0.0)
+        except Exception as e:
+            print(f"Warning: overlay show_listening failed: {e}", file=sys.stderr)
 
     def _on_key_up(self, key_code: int) -> None:
         """Handle key release event."""
@@ -146,17 +154,16 @@ class NoasrRuntime:
 
         # Stop recording and get audio
         try:
-            result = self._recorder.stop_and_normalize()
-            if result is None:
-                print("Recording too short, discarding", file=sys.stderr)
-                self._reset_to_idle()
-                return
+            wav_bytes = self._recorder.stop_and_normalize()
         except Exception as e:
             print(f"Recording error: {e}", file=sys.stderr)
             self._reset_to_idle()
             return
 
-        audio_data_uri, duration = result
+        # Convert WAV bytes to base64 data URI
+        audio_data_uri = (
+            f"data:audio/wav;base64,{base64.b64encode(wav_bytes).decode('utf-8')}"
+        )
 
         # Process with LLM
         try:
@@ -169,45 +176,15 @@ class NoasrRuntime:
 
     def _process_recording(self, audio_data_uri: str) -> None:
         """Process recorded audio through LLM and inject result."""
-        # Load prompts
-        system_prompt = load_system_prompt()
-        user_prompt = load_user_prompt()
+        # All LLM interaction goes through AgentManager
+        if self._active_agent is None:
+            print("Error: No active agent for recording", file=sys.stderr)
+            self._reset_to_idle()
+            return
 
-        # Build initial messages
-        messages = []
-
-        # System message
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-
-        # User message with audio and text
-        user_content = []
-        user_content.append(
-            {
-                "type": "input_audio",
-                "input_audio": {"data": audio_data_uri},
-            }
+        final_text = self._agent_manager.run_agent(
+            self._active_agent.name, audio_data_uri, self._client
         )
-        if user_prompt:
-            user_content.append({"type": "text", "text": user_prompt})
-
-        messages.append({"role": "user", "content": user_content})
-
-        # Run through agent manager (handles ReAct loop)
-        if self._active_agent:
-            final_text = self._agent_manager.run_agent(
-                self._active_agent.name,
-                messages,
-                self._client,
-            )
-        else:
-            # Fallback: direct client call without agent
-            response = self._client.send(messages=messages, tools=None)
-            choices = response.get("choices", [])
-            if choices:
-                final_text = choices[0].get("message", {}).get("content", "")
-            else:
-                final_text = ""
 
         # Apply regex transformations
         if self._regex_processor and final_text:
@@ -216,16 +193,31 @@ class NoasrRuntime:
         # Inject text
         self._state = RuntimeState.APPLYING_RESULT
         if final_text and final_text.strip():
-            self._injector.inject(final_text)
+            try:
+                self._injector.inject(final_text)
+            except Exception as e:
+                print(f"Error: Text injection failed: {e}", file=sys.stderr)
+                try:
+                    self._overlay.show_error()
+                    time.sleep(1.0)
+                except Exception:
+                    pass
 
         # Reset to idle
         self._reset_to_idle()
 
     def _reset_to_idle(self) -> None:
-        """Reset runtime to idle state."""
+        """Reset runtime to idle state.
+
+        State is always reset even if overlay operations fail,
+        to prevent the runtime from getting wedged in a non-IDLE state.
+        """
         self._state = RuntimeState.IDLE
         self._active_agent = None
-        self._overlay.hide()
+        try:
+            self._overlay.hide()
+        except Exception as e:
+            print(f"Warning: overlay hide failed: {e}", file=sys.stderr)
 
     def run(self) -> int:
         """Run the main event loop.
@@ -275,9 +267,11 @@ class NoasrRuntime:
                 print("\nShutting down noasr...", file=sys.stderr)
 
         finally:
-            # Cleanup
-            self._hotkey.stop()
-            self._overlay.stop()
+            # Cleanup (guard against partial initialization)
+            if self._hotkey is not None:
+                self._hotkey.stop()
+            if self._overlay is not None:
+                self._overlay.stop()
             release_runtime_lock()
 
         return 0

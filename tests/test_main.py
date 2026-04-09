@@ -350,11 +350,10 @@ class TestOnKeyUp:
         runtime._active_agent = mock.MagicMock()
         runtime._active_agent.name = "dictate"
 
-        # Mock recorder to return valid audio data
-        mocks["recorder"].stop_and_normalize.return_value = (
-            "data:audio/wav;base64,AAAA",
-            1.5,
-        )
+        # Mock recorder to return valid WAV bytes
+        mocks[
+            "recorder"
+        ].stop_and_normalize.return_value = b"RIFF\x00\x00\x00\x00WAVEfmt "
 
         # Mock _process_recording to avoid actual LLM call
         with mock.patch.object(runtime, "_process_recording"):
@@ -373,14 +372,18 @@ class TestOnKeyUp:
 
         mocks["recorder"].stop_and_normalize.assert_not_called()
 
-    def test_key_up_none_recording_result_resets_to_idle(self) -> None:
-        """When recorder returns None, runtime should reset to IDLE."""
+    def test_key_up_recording_too_short_resets_to_idle(self) -> None:
+        """When recorder raises RecordingTooShortError, runtime should reset to IDLE."""
+        from noasr.audio import RecordingTooShortError
+
         runtime, mocks = _make_runtime_with_mocks()
 
         runtime._state = RuntimeState.LISTENING
         runtime._active_agent = mock.MagicMock()
 
-        mocks["recorder"].stop_and_normalize.return_value = None
+        mocks["recorder"].stop_and_normalize.side_effect = RecordingTooShortError(
+            "Recording too short: 0.1s < 0.3s"
+        )
 
         runtime._on_key_up(62)
 
@@ -409,10 +412,9 @@ class TestOnKeyUp:
         runtime._active_agent = mock.MagicMock()
         runtime._active_agent.name = "dictate"
 
-        mocks["recorder"].stop_and_normalize.return_value = (
-            "data:audio/wav;base64,AAAA",
-            1.5,
-        )
+        mocks[
+            "recorder"
+        ].stop_and_normalize.return_value = b"RIFF\x00\x00\x00\x00WAVEfmt "
 
         with mock.patch.object(
             runtime, "_process_recording", side_effect=Exception("LLM error")
@@ -436,7 +438,7 @@ class TestProcessRecording:
         _reset_tool_manager()
 
     def test_process_recording_sends_audio_and_injects_text(self) -> None:
-        """_process_recording should send audio to LLM, apply regex, inject text."""
+        """_process_recording should call run_agent, apply regex, inject text."""
         runtime, mocks = _make_runtime_with_mocks()
 
         runtime._active_agent = mock.MagicMock()
@@ -445,15 +447,11 @@ class TestProcessRecording:
         mocks["agent_manager"].run_agent.return_value = "Hello world"
         mocks["regex"].apply.return_value = "Hello world"
 
-        with mock.patch("noasr.main.load_system_prompt", return_value="sys"):
-            with mock.patch("noasr.main.load_user_prompt", return_value="user"):
-                runtime._process_recording("data:audio/wav;base64,AAAA")
+        runtime._process_recording("data:audio/wav;base64,AAAA")
 
-        mocks["agent_manager"].run_agent.assert_called_once()
-        call_args = mocks["agent_manager"].run_agent.call_args
-        assert call_args[0][0] == "dictate"
-        assert call_args[0][2] is mocks["client"]
-
+        mocks["agent_manager"].run_agent.assert_called_once_with(
+            "dictate", "data:audio/wav;base64,AAAA", mocks["client"]
+        )
         mocks["regex"].apply.assert_called_once_with("Hello world")
         mocks["injector"].inject.assert_called_once_with("Hello world")
         assert runtime.state == RuntimeState.IDLE
@@ -468,9 +466,7 @@ class TestProcessRecording:
         mocks["agent_manager"].run_agent.return_value = ""
         mocks["regex"].apply.return_value = ""
 
-        with mock.patch("noasr.main.load_system_prompt", return_value=""):
-            with mock.patch("noasr.main.load_user_prompt", return_value=""):
-                runtime._process_recording("data:audio/wav;base64,AAAA")
+        runtime._process_recording("data:audio/wav;base64,AAAA")
 
         mocks["injector"].inject.assert_not_called()
 
@@ -484,41 +480,7 @@ class TestProcessRecording:
         mocks["agent_manager"].run_agent.return_value = "   "
         mocks["regex"].apply.return_value = "   "
 
-        with mock.patch("noasr.main.load_system_prompt", return_value=""):
-            with mock.patch("noasr.main.load_user_prompt", return_value=""):
-                runtime._process_recording("data:audio/wav;base64,AAAA")
-
-        mocks["injector"].inject.assert_not_called()
-
-    def test_process_recording_no_active_agent_fallback(self) -> None:
-        """_process_recording with no active agent should use direct client call."""
-        runtime, mocks = _make_runtime_with_mocks()
-
-        runtime._active_agent = None
-
-        mocks["client"].send.return_value = {
-            "choices": [{"message": {"content": "Fallback text"}}]
-        }
-        mocks["regex"].apply.return_value = "Fallback text"
-
-        with mock.patch("noasr.main.load_system_prompt", return_value="sys"):
-            with mock.patch("noasr.main.load_user_prompt", return_value="user"):
-                runtime._process_recording("data:audio/wav;base64,AAAA")
-
-        mocks["client"].send.assert_called_once()
-        mocks["injector"].inject.assert_called_once_with("Fallback text")
-
-    def test_process_recording_no_active_agent_empty_choices(self) -> None:
-        """_process_recording fallback with empty choices should not inject."""
-        runtime, mocks = _make_runtime_with_mocks()
-
-        runtime._active_agent = None
-
-        mocks["client"].send.return_value = {"choices": []}
-
-        with mock.patch("noasr.main.load_system_prompt", return_value=""):
-            with mock.patch("noasr.main.load_user_prompt", return_value=""):
-                runtime._process_recording("data:audio/wav;base64,AAAA")
+        runtime._process_recording("data:audio/wav;base64,AAAA")
 
         mocks["injector"].inject.assert_not_called()
 
@@ -532,9 +494,7 @@ class TestProcessRecording:
         mocks["agent_manager"].run_agent.return_value = "Hello world"
         mocks["regex"].apply.return_value = "Hello transformed"
 
-        with mock.patch("noasr.main.load_system_prompt", return_value=""):
-            with mock.patch("noasr.main.load_user_prompt", return_value=""):
-                runtime._process_recording("data:audio/wav;base64,AAAA")
+        runtime._process_recording("data:audio/wav;base64,AAAA")
 
         # Injector should receive the regex-processed text
         mocks["injector"].inject.assert_called_once_with("Hello transformed")
@@ -549,9 +509,7 @@ class TestProcessRecording:
 
         mocks["agent_manager"].run_agent.return_value = "Hello world"
 
-        with mock.patch("noasr.main.load_system_prompt", return_value=""):
-            with mock.patch("noasr.main.load_user_prompt", return_value=""):
-                runtime._process_recording("data:audio/wav;base64,AAAA")
+        runtime._process_recording("data:audio/wav;base64,AAAA")
 
         mocks["injector"].inject.assert_called_once_with("Hello world")
 
@@ -572,9 +530,7 @@ class TestProcessRecording:
 
         mocks["injector"].inject.side_effect = capture_state
 
-        with mock.patch("noasr.main.load_system_prompt", return_value=""):
-            with mock.patch("noasr.main.load_user_prompt", return_value=""):
-                runtime._process_recording("data:audio/wav;base64,AAAA")
+        runtime._process_recording("data:audio/wav;base64,AAAA")
 
         assert RuntimeState.APPLYING_RESULT in states_seen
 

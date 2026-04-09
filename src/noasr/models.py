@@ -51,6 +51,8 @@ class AgentConfig:
     name: str = ""
     trigger: list[int] = field(default_factory=list)
     toolsets: list[str] = field(default_factory=list)
+    system_prompt_file: str = "input_system_prompt.md"
+    user_prompt_file: str = "input_user_prompt.md"
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AgentConfig":
@@ -59,69 +61,9 @@ class AgentConfig:
             name=data.get("name", ""),
             trigger=data.get("trigger", []),
             toolsets=data.get("toolsets", []),
+            system_prompt_file=data.get("system_prompt_file", "input_system_prompt.md"),
+            user_prompt_file=data.get("user_prompt_file", "input_user_prompt.md"),
         )
-
-
-@dataclass
-class MiMoRequest:
-    """MiMo API request structure."""
-
-    model: str = "xiaomi/mimo-v2-omni"
-    messages: list[dict[str, Any]] = field(default_factory=list)
-    max_completion_tokens: int = 1024
-    tools: list[dict[str, Any]] | None = None
-    tool_choice: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for API call."""
-        result = {
-            "model": self.model,
-            "messages": self.messages,
-            "max_completion_tokens": self.max_completion_tokens,
-        }
-        if self.tools is not None:
-            result["tools"] = self.tools
-        if self.tool_choice is not None:
-            result["tool_choice"] = self.tool_choice
-        return result
-
-
-@dataclass
-class MiMoResponse:
-    """MiMo API response structure."""
-
-    id: str = ""
-    choices: list[dict[str, Any]] = field(default_factory=list)
-    model: str = ""
-    usage: dict[str, Any] = field(default_factory=dict)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "MiMoResponse":
-        """Create response from dictionary."""
-        return cls(
-            id=data.get("id", ""),
-            choices=data.get("choices", []),
-            model=data.get("model", ""),
-            usage=data.get("usage", {}),
-        )
-
-    def get_content(self) -> str:
-        """Get the assistant's content from the first choice."""
-        if self.choices and len(self.choices) > 0:
-            message = self.choices[0].get("message", {})
-            return message.get("content", "")
-        return ""
-
-    def get_tool_calls(self) -> list[dict[str, Any]]:
-        """Get tool calls from the first choice."""
-        if self.choices and len(self.choices) > 0:
-            message = self.choices[0].get("message", {})
-            return message.get("tool_calls", []) or []
-        return []
-
-    def has_tool_calls(self) -> bool:
-        """Check if response contains tool calls."""
-        return len(self.get_tool_calls()) > 0
 
 
 @dataclass

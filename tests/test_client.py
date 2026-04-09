@@ -8,7 +8,6 @@ import pytest
 from openai.types.chat import ChatCompletion
 
 from noasr.client import MiMoClient, OpenAiTransport, create_client, MiMoTransport
-from noasr.models import MiMoResponse
 
 
 class MockTransport:
@@ -88,172 +87,43 @@ def client(mock_transport: MockTransport) -> MiMoClient:
     )
 
 
-class TestMessageBuilding:
-    """Tests for message building functions."""
+class TestSend:
+    """Tests for MiMoClient.send()."""
 
-    def test_transcription_messages_structure(self, client: MiMoClient) -> None:
-        """Test that transcription mode produces correct message structure."""
-        messages = client.build_transcription_messages(
-            system_prompt="You are a helpful assistant.",
-            user_prompt="Transcribe this audio.",
-            audio_data_uri="data:audio/wav;base64,test123",
-        )
-
-        # Should have exactly 2 messages
-        assert len(messages) == 2
-
-        # First message should be system
-        assert messages[0]["role"] == "system"
-        assert messages[0]["content"] == "You are a helpful assistant."
-
-        # Second message should be user with multimodal content
-        assert messages[1]["role"] == "user"
-        assert isinstance(messages[1]["content"], list)
-        assert len(messages[1]["content"]) == 2
-
-        # First content item should be audio
-        assert messages[1]["content"][0]["type"] == "input_audio"
-        assert (
-            messages[1]["content"][0]["input_audio"]["data"]
-            == "data:audio/wav;base64,test123"
-        )
-
-        # Second content item should be text
-        assert messages[1]["content"][1]["type"] == "text"
-        assert messages[1]["content"][1]["text"] == "Transcribe this audio."
-
-    def test_transcription_messages_empty_prompts(self, client: MiMoClient) -> None:
-        """Test message building with empty prompts."""
-        messages = client.build_transcription_messages(
-            system_prompt="",
-            user_prompt="",
-            audio_data_uri="data:audio/wav;base64,test123",
-        )
-
-        # System prompt empty - should not include system message
-        assert len(messages) == 1
-        assert messages[0]["role"] == "user"
-
-        # User content should have audio but no text (text is empty)
-        assert len(messages[0]["content"]) == 1  # Only audio
-
-    def test_agent_messages_with_history(self, client: MiMoClient) -> None:
-        """Test agent message building with conversation history."""
-        history = [
-            {"role": "user", "content": "Previous message"},
-            {"role": "assistant", "content": "Previous response"},
-        ]
-
-        messages = client.build_agent_messages(
-            system_prompt="System prompt",
-            user_prompt="User prompt",
-            audio_data_uri="data:audio/wav;base64,test123",
-            conversation_history=history,
-        )
-
-        # Should preserve history
-        assert len(messages) == 2
-        assert messages[0]["content"] == "Previous message"
-        assert messages[1]["content"] == "Previous response"
-
-    def test_agent_messages_without_history(self, client: MiMoClient) -> None:
-        """Test agent message building without conversation history."""
-        messages = client.build_agent_messages(
-            system_prompt="System prompt",
-            user_prompt="User prompt",
-            audio_data_uri="data:audio/wav;base64,test123",
-        )
-
-        # Should create initial messages
-        assert len(messages) == 2
-        assert messages[0]["role"] == "system"
-        assert messages[1]["role"] == "user"
-
-
-class TestTranscriptionMode:
-    """Tests for plain transcription mode."""
-
-    def test_transcription_sends_correct_payload(
+    def test_send_passes_correct_kwargs_to_transport(
         self, client: MiMoClient, mock_transport: MockTransport
     ) -> None:
-        """Test that transcription sends correct two-message payload."""
-        response = ChatCompletion.model_validate(
-            {
-                "id": "transcription-id",
-                "choices": [
-                    {
-                        "finish_reason": "stop",
-                        "index": 0,
-                        "message": {
-                            "content": "Transcribed text here",
-                            "role": "assistant",
-                        },
-                    }
-                ],
-                "created": 1234567890,
-                "model": "xiaomi/mimo-v2-omni",
-                "object": "chat.completion",
-                "usage": {
-                    "completion_tokens": 10,
-                    "prompt_tokens": 50,
-                    "total_tokens": 60,
-                },
-            }
-        )
-        mock_transport._response = response
+        """Test that send() passes correct kwargs to transport."""
+        messages = [
+            {"role": "system", "content": "You are a helper."},
+            {"role": "user", "content": "Hello"},
+        ]
 
-        result = client.transcribe(
-            system_prompt="You are a transcriber.",
-            user_prompt="Transcribe this.",
-            audio_data_uri="data:audio/wav;base64,abc123",
-        )
+        client.send(messages=messages)
 
-        # Check the call
         call = mock_transport.get_last_call()
         assert call is not None
         assert call["model"] == "xiaomi/mimo-v2-omni"
+        assert call["messages"] == messages
         assert call["max_completion_tokens"] == 1024
         assert call["tools"] is None
+        assert call["tool_choice"] is None
 
-        # Check messages
-        messages = call["messages"]
-        assert len(messages) == 2
-
-        # System message
-        assert messages[0]["role"] == "system"
-        assert messages[0]["content"] == "You are a transcriber."
-
-        # User message
-        assert messages[1]["role"] == "user"
-        assert isinstance(messages[1]["content"], list)
-
-        # Response should be parsed correctly
-        assert isinstance(result, MiMoResponse)
-        assert result.get_content() == "Transcribed text here"
-
-    def test_transcription_no_tools_in_request(
+    def test_send_returns_raw_dict(
         self, client: MiMoClient, mock_transport: MockTransport
     ) -> None:
-        """Test that transcription mode does not include tools."""
-        client.transcribe(
-            system_prompt="System",
-            user_prompt="User",
-            audio_data_uri="data:audio/wav;base64,test",
-        )
+        """Test that send() returns a raw dict with 'choices' key."""
+        messages = [{"role": "user", "content": "Hello"}]
+        result = client.send(messages=messages)
 
-        call = mock_transport.get_last_call()
-        assert call is not None
-        assert call.get("tools") is None
-        assert call.get("tool_choice") is None
+        assert isinstance(result, dict)
+        assert "choices" in result
+        assert "id" in result
 
-
-class TestAgentMode:
-    """Tests for agent mode with tools."""
-
-    def test_agent_mode_includes_tools(
+    def test_send_with_tools_auto_defaults_tool_choice(
         self, client: MiMoClient, mock_transport: MockTransport
     ) -> None:
-        """Test that agent mode includes merged tools."""
+        """Test that send() auto-sets tool_choice='auto' when tools provided."""
         tools = [
             {
                 "type": "function",
@@ -265,96 +135,50 @@ class TestAgentMode:
             }
         ]
 
-        mock_transport._response = ChatCompletion.model_validate(
-            {
-                "id": "agent-id",
-                "choices": [
-                    {
-                        "finish_reason": "tool_calls",
-                        "index": 0,
-                        "message": {
-                            "content": "",
-                            "role": "assistant",
-                            "tool_calls": [
-                                {
-                                    "id": "call_123",
-                                    "type": "function",
-                                    "function": {
-                                        "name": "get_datetime",
-                                        "arguments": "{}",
-                                    },
-                                }
-                            ],
-                        },
-                    }
-                ],
-                "created": 1234567890,
-                "model": "xiaomi/mimo-v2-omni",
-                "object": "chat.completion",
-                "usage": {
-                    "completion_tokens": 20,
-                    "prompt_tokens": 100,
-                    "total_tokens": 120,
-                },
-            }
-        )
-
-        result = client.run_agent(
-            system_prompt="You are an agent.",
-            user_prompt="What time is it?",
-            audio_data_uri="data:audio/wav;base64,test",
-            tools=tools,
-        )
+        client.send(messages=[], tools=tools)
 
         call = mock_transport.get_last_call()
         assert call is not None
         assert call["tools"] == tools
         assert call["tool_choice"] == "auto"
 
-        # Check response parsing for tool calls
-        assert result.has_tool_calls()
-        tool_calls = result.get_tool_calls()
-        assert len(tool_calls) == 1
-        assert tool_calls[0]["function"]["name"] == "get_datetime"
-
-    def test_agent_mode_with_tool_choice(
+    def test_send_with_explicit_tool_choice(
         self, client: MiMoClient, mock_transport: MockTransport
     ) -> None:
-        """Test that agent mode respects tool_choice parameter."""
+        """Test that send() respects explicit tool_choice parameter."""
         tools = [{"type": "function", "function": {"name": "test_tool"}}]
 
-        mock_transport._response = ChatCompletion.model_validate(
-            {
-                "id": "id",
-                "choices": [
-                    {
-                        "finish_reason": "stop",
-                        "index": 0,
-                        "message": {"content": "Done", "role": "assistant"},
-                    }
-                ],
-                "created": 1234567890,
-                "model": "xiaomi/mimo-v2-omni",
-                "object": "chat.completion",
-                "usage": {
-                    "completion_tokens": 1,
-                    "prompt_tokens": 1,
-                    "total_tokens": 2,
-                },
-            }
-        )
-
-        client.run_agent(
-            system_prompt="System",
-            user_prompt="User",
-            audio_data_uri="data:audio/wav;base64,test",
-            tools=tools,
-            tool_choice="required",
-        )
+        client.send(messages=[], tools=tools, tool_choice="required")
 
         call = mock_transport.get_last_call()
         assert call is not None
         assert call["tool_choice"] == "required"
+
+    def test_send_custom_model_and_tokens(
+        self, client: MiMoClient, mock_transport: MockTransport
+    ) -> None:
+        """Test that send() passes custom model and max_completion_tokens."""
+        client.send(
+            messages=[],
+            model="custom-model",
+            max_completion_tokens=2048,
+        )
+
+        call = mock_transport.get_last_call()
+        assert call is not None
+        assert call["model"] == "custom-model"
+        assert call["max_completion_tokens"] == 2048
+
+    def test_send_no_tools_no_tool_choice(
+        self, client: MiMoClient, mock_transport: MockTransport
+    ) -> None:
+        """Test that send() omits tool_choice when no tools provided."""
+        client.send(messages=[])
+
+        call = mock_transport.get_last_call()
+        assert call is not None
+        assert call["tools"] is None
+        assert call["tool_choice"] is None
 
 
 class TestLogging:
@@ -364,11 +188,7 @@ class TestLogging:
         self, client: MiMoClient, mock_transport: MockTransport, capsys: Any
     ) -> None:
         """Test that request dict is logged to stderr."""
-        client.transcribe(
-            system_prompt="System",
-            user_prompt="User",
-            audio_data_uri="data:audio/wav;base64,test",
-        )
+        client.send(messages=[{"role": "user", "content": "Hello"}])
 
         captured = capsys.readouterr()
 
@@ -380,12 +200,10 @@ class TestLogging:
         response_start = captured.err.find("[MiMo RESPONSE]")
 
         if response_start > request_start:
-            # Get the JSON between the two markers
             json_str = captured.err[
                 request_start + len("[MiMo REQUEST] ") : response_start
             ].strip()
         else:
-            # Fallback: just get the part after REQUEST
             json_start = captured.err.find("{", request_start)
             json_str = captured.err[json_start:]
 
@@ -397,11 +215,7 @@ class TestLogging:
         self, client: MiMoClient, mock_transport: MockTransport, capsys: Any
     ) -> None:
         """Test that response JSON is logged to stderr."""
-        client.transcribe(
-            system_prompt="System",
-            user_prompt="User",
-            audio_data_uri="data:audio/wav;base64,test",
-        )
+        client.send(messages=[{"role": "user", "content": "Hello"}])
 
         captured = capsys.readouterr()
 
@@ -423,7 +237,6 @@ class TestMockTransport:
         self, client: MiMoClient, mock_transport: MockTransport
     ) -> None:
         """Test that mock transport prevents real API calls."""
-        # This test verifies we're using the mock, not making real calls
         mock_transport._response = ChatCompletion.model_validate(
             {
                 "id": "mock-id",
@@ -445,11 +258,12 @@ class TestMockTransport:
             }
         )
 
-        result = client.transcribe("System", "User", "data:audio/wav;base64,test")
+        result = client.send(messages=[{"role": "user", "content": "test"}])
 
-        # Should get the mock response, not a real API response
-        assert result.id == "mock-id"
-        assert result.get_content() == "Mock response"
+        # Should get the mock response as a raw dict
+        assert isinstance(result, dict)
+        assert result["id"] == "mock-id"
+        assert result["choices"][0]["message"]["content"] == "Mock response"
 
         # Should have recorded the call
         assert len(mock_transport.get_calls()) == 1
@@ -489,12 +303,12 @@ class TestOpenAiTransport:
 
 
 class TestToolCallParsing:
-    """Tests for tool call response parsing."""
+    """Tests for tool call response parsing via send()."""
 
     def test_tool_call_response_parsing(
         self, client: MiMoClient, mock_transport: MockTransport
     ) -> None:
-        """Test parsing of tool call responses."""
+        """Test parsing of tool call responses from send()."""
         mock_transport._response = ChatCompletion.model_validate(
             {
                 "id": "tool-call-id",
@@ -537,10 +351,10 @@ class TestToolCallParsing:
             }
         )
 
-        result = client.transcribe("System", "User", "data:audio/wav;base64,test")
+        result = client.send(messages=[{"role": "user", "content": "test"}])
 
-        assert result.has_tool_calls()
-        tool_calls = result.get_tool_calls()
+        # Result is a raw dict — check tool_calls in the response
+        tool_calls = result["choices"][0]["message"].get("tool_calls", [])
         assert len(tool_calls) == 2
         assert tool_calls[0]["id"] == "call_1"
         assert tool_calls[1]["id"] == "call_2"
@@ -573,11 +387,11 @@ class TestToolCallParsing:
             }
         )
 
-        result = client.transcribe("System", "User", "data:audio/wav;base64,test")
+        result = client.send(messages=[{"role": "user", "content": "test"}])
 
-        assert not result.has_tool_calls()
-        assert result.get_tool_calls() == []
-        assert result.get_content() == "Final answer"
+        message = result["choices"][0]["message"]
+        assert message.get("tool_calls") is None
+        assert message["content"] == "Final answer"
 
 
 class TestErrorHandling:
@@ -602,10 +416,9 @@ class TestErrorHandling:
             }
         )
 
-        result = client.transcribe("System", "User", "data:audio/wav;base64,test")
+        result = client.send(messages=[{"role": "user", "content": "test"}])
 
-        assert result.get_content() == ""
-        assert result.get_tool_calls() == []
+        assert result["choices"] == []
 
     def test_missing_message_handling(
         self, client: MiMoClient, mock_transport: MockTransport
@@ -632,10 +445,9 @@ class TestErrorHandling:
             }
         )
 
-        result = client.transcribe("System", "User", "data:audio/wav;base64,test")
+        result = client.send(messages=[{"role": "user", "content": "test"}])
 
-        assert result.get_content() == ""
-        assert result.get_tool_calls() == []
+        assert result["choices"][0]["message"]["content"] == ""
 
 
 class TestModelDefaults:
@@ -645,7 +457,7 @@ class TestModelDefaults:
         self, client: MiMoClient, mock_transport: MockTransport
     ) -> None:
         """Test that default model and token values are used."""
-        client.transcribe("System", "User", "data:audio/wav;base64,test")
+        client.send(messages=[{"role": "user", "content": "test"}])
 
         call = mock_transport.get_last_call()
         assert call is not None
@@ -656,10 +468,8 @@ class TestModelDefaults:
         self, client: MiMoClient, mock_transport: MockTransport
     ) -> None:
         """Test that custom model and token values can be specified."""
-        client.transcribe(
-            "System",
-            "User",
-            "data:audio/wav;base64,test",
+        client.send(
+            messages=[{"role": "user", "content": "test"}],
             model="custom-model",
             max_completion_tokens=2048,
         )

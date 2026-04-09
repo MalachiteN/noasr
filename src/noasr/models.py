@@ -1,0 +1,196 @@
+"""Domain models and data structures for noasr."""
+
+from dataclasses import dataclass, field
+from enum import Enum, auto
+from typing import Any
+
+
+class RuntimeState(Enum):
+    """Runtime state machine states."""
+
+    IDLE = auto()
+    LISTENING = auto()
+    LOADING = auto()
+    ERROR = auto()
+    APPLYING_RESULT = auto()
+
+
+class OverlayState(Enum):
+    """Overlay display states."""
+
+    HIDDEN = auto()
+    LISTENING = auto()
+    LOADING = auto()
+    ERROR = auto()
+
+
+@dataclass
+class AppConfig:
+    """Application configuration."""
+
+    baseurl: str = "https://api.mi-fds.com/v1"
+    api_key: str = ""
+    toolsets: dict[str, list[str]] = field(default_factory=dict)
+    agents: list[dict[str, Any]] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "AppConfig":
+        """Create config from dictionary with safe defaults."""
+        return cls(
+            baseurl=data.get("baseurl", "https://api.mi-fds.com/v1"),
+            api_key=data.get("api_key", ""),
+            toolsets=data.get("toolsets", {}),
+            agents=data.get("agents", []),
+        )
+
+
+@dataclass
+class AgentConfig:
+    """Agent configuration."""
+
+    name: str = ""
+    trigger: list[int] = field(default_factory=list)
+    toolsets: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "AgentConfig":
+        """Create agent config from dictionary with safe defaults."""
+        return cls(
+            name=data.get("name", ""),
+            trigger=data.get("trigger", []),
+            toolsets=data.get("toolsets", []),
+        )
+
+
+@dataclass
+class MiMoRequest:
+    """MiMo API request structure."""
+
+    model: str = "xiaomi/mimo-v2-omni"
+    messages: list[dict[str, Any]] = field(default_factory=list)
+    max_completion_tokens: int = 1024
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for API call."""
+        result = {
+            "model": self.model,
+            "messages": self.messages,
+            "max_completion_tokens": self.max_completion_tokens,
+        }
+        if self.tools is not None:
+            result["tools"] = self.tools
+        if self.tool_choice is not None:
+            result["tool_choice"] = self.tool_choice
+        return result
+
+
+@dataclass
+class MiMoResponse:
+    """MiMo API response structure."""
+
+    id: str = ""
+    choices: list[dict[str, Any]] = field(default_factory=list)
+    model: str = ""
+    usage: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "MiMoResponse":
+        """Create response from dictionary."""
+        return cls(
+            id=data.get("id", ""),
+            choices=data.get("choices", []),
+            model=data.get("model", ""),
+            usage=data.get("usage", {}),
+        )
+
+    def get_content(self) -> str:
+        """Get the assistant's content from the first choice."""
+        if self.choices and len(self.choices) > 0:
+            message = self.choices[0].get("message", {})
+            return message.get("content", "")
+        return ""
+
+    def get_tool_calls(self) -> list[dict[str, Any]]:
+        """Get tool calls from the first choice."""
+        if self.choices and len(self.choices) > 0:
+            message = self.choices[0].get("message", {})
+            return message.get("tool_calls", []) or []
+        return []
+
+    def has_tool_calls(self) -> bool:
+        """Check if response contains tool calls."""
+        return len(self.get_tool_calls()) > 0
+
+
+@dataclass
+class AudioPayload:
+    """Audio payload for MiMo API."""
+
+    data_uri: str = ""  # base64 data URI
+
+    @classmethod
+    def from_wav_bytes(cls, wav_bytes: bytes) -> "AudioPayload":
+        """Create audio payload from WAV bytes."""
+        import base64
+
+        encoded = base64.b64encode(wav_bytes).decode("utf-8")
+        return cls(data_uri=f"data:audio/wav;base64,{encoded}")
+
+    def to_api_item(self) -> dict[str, Any]:
+        """Convert to API message item."""
+        return {"type": "input_audio", "input_audio": {"data": self.data_uri}}
+
+
+@dataclass
+class PlatformInfo:
+    """Platform information and capabilities."""
+
+    platform: str = ""
+    is_windows: bool = False
+    is_macos: bool = False
+    is_linux: bool = False
+    display_server: str | None = None  # x11, wayland, or None
+
+    def get_warnings(self) -> list[str]:
+        """Get platform-specific warnings."""
+        from noasr.constants import PLATFORM_WARNINGS, PlatformCapability
+
+        warnings = []
+        if self.is_macos:
+            warnings.append(PLATFORM_WARNINGS[PlatformCapability.MACOS])
+        elif self.is_linux:
+            if self.display_server == "wayland":
+                warnings.append(PLATFORM_WARNINGS[PlatformCapability.LINUX_WAYLAND])
+            elif self.display_server == "x11":
+                warnings.append(PLATFORM_WARNINGS[PlatformCapability.LINUX_X11])
+            else:
+                warnings.append(PLATFORM_WARNINGS[PlatformCapability.LINUX])
+        return warnings
+
+
+def get_platform_info() -> PlatformInfo:
+    """Detect current platform and capabilities."""
+    import sys
+
+    info = PlatformInfo()
+    info.platform = sys.platform
+
+    if sys.platform == "win32":
+        info.is_windows = True
+    elif sys.platform == "darwin":
+        info.is_macos = True
+    elif sys.platform.startswith("linux"):
+        info.is_linux = True
+        # Try to detect display server
+        import os
+
+        wayland_display = os.environ.get("WAYLAND_DISPLAY")
+        display = os.environ.get("DISPLAY")
+        if wayland_display:
+            info.display_server = "wayland"
+        elif display:
+            info.display_server = "x11"
+
+    return info

@@ -1,5 +1,12 @@
-"""Overlay UI controller for noasr using Flet."""
+"""Overlay UI controller for noasr using Flet.
 
+Flet requires the main thread (it calls signal.signal internally).
+Therefore run_main() must be called from the main thread — it blocks.
+All state changes from background threads go through a queue,
+and a Flet-managed background thread polls the queue to apply updates.
+"""
+
+import queue
 import sys
 import threading
 from typing import Optional
@@ -12,6 +19,13 @@ class OverlayController:
 
     Uses Flet to render a bottom-of-screen black capsule with centered white text.
     Best-effort topmost/non-activating; on Windows prioritized, macOS/Linux degraded.
+
+    Threading model:
+    - run_main() MUST be called from the main thread (blocks until stop).
+    - show_listening(), show_loading(), show_error(), hide(), update_elapsed()
+      are safe to call from any thread — they enqueue state updates.
+    - A Flet-managed background thread (via page.run_thread) drains the queue
+      and calls page.update() on the Flet event loop, which is thread-safe.
     """
 
     def __init__(self) -> None:
@@ -19,8 +33,9 @@ class OverlayController:
         self._elapsed_seconds: float = 0.0
         self._page = None
         self._text_control = None
-        self._app_thread: Optional[threading.Thread] = None
+        self._container = None
         self._running = False
+        self._update_queue: queue.Queue = queue.Queue()
 
     @property
     def state(self) -> OverlayState:
@@ -28,44 +43,68 @@ class OverlayController:
         return self._state
 
     def start(self) -> None:
-        """Start the overlay in a background thread."""
-        if self._running:
-            return
+        """Mark overlay as running (does not start Flet — run_main does that)."""
         self._running = True
-        self._app_thread = threading.Thread(target=self._run_app, daemon=True)
-        self._app_thread.start()
 
     def stop(self) -> None:
-        """Stop the overlay."""
+        """Signal the overlay to stop."""
         self._running = False
         self._state = OverlayState.HIDDEN
 
     def show_listening(self, elapsed: float = 0.0) -> None:
-        """Show listening state with elapsed time."""
-        self._state = OverlayState.LISTENING
-        self._elapsed_seconds = elapsed
-        self._update_display()
+        """Show listening state with elapsed time. Thread-safe."""
+        self._enqueue(OverlayState.LISTENING, elapsed)
 
     def show_loading(self) -> None:
-        """Show loading state."""
-        self._state = OverlayState.LOADING
-        self._update_display()
+        """Show loading state. Thread-safe."""
+        self._enqueue(OverlayState.LOADING)
 
     def show_error(self) -> None:
-        """Show error state."""
-        self._state = OverlayState.ERROR
-        self._update_display()
+        """Show error state. Thread-safe."""
+        self._enqueue(OverlayState.ERROR)
 
     def hide(self) -> None:
-        """Hide the overlay."""
-        self._state = OverlayState.HIDDEN
-        self._update_display()
+        """Hide the overlay. Thread-safe."""
+        self._enqueue(OverlayState.HIDDEN)
 
     def update_elapsed(self, elapsed: float) -> None:
-        """Update the elapsed time display."""
-        self._elapsed_seconds = elapsed
+        """Update the elapsed time display. Thread-safe."""
         if self._state == OverlayState.LISTENING:
-            self._update_display()
+            self._enqueue(OverlayState.LISTENING, elapsed)
+
+    def _enqueue(self, state: OverlayState, elapsed: float = 0.0) -> None:
+        """Enqueue a state change for the UI thread to process."""
+        self._state = state
+        self._elapsed_seconds = elapsed
+        self._update_queue.put((state, elapsed))
+
+    def _drain_and_apply(self) -> None:
+        """Drain all pending state updates and apply the latest one.
+
+        Called on a Flet-managed thread, so page.update() is safe.
+        """
+        latest_state: Optional[OverlayState] = None
+        latest_elapsed: float = 0.0
+        # Drain all pending updates, keep only the latest
+        while not self._update_queue.empty():
+            try:
+                latest_state, latest_elapsed = self._update_queue.get_nowait()
+            except queue.Empty:
+                break
+
+        if latest_state is None:
+            return
+
+        if self._page is None or self._text_control is None:
+            return
+
+        try:
+            text = self._get_display_text(latest_state, latest_elapsed)
+            self._text_control.value = text
+            self._page.window.visible = latest_state != OverlayState.HIDDEN
+            self._page.update()
+        except Exception:
+            pass
 
     def _format_time(self, seconds: float) -> str:
         """Format seconds as MM:SS."""
@@ -73,30 +112,40 @@ class OverlayController:
         secs = int(seconds) % 60
         return f"{mins:02d}:{secs:02d}"
 
-    def _get_display_text(self) -> str:
-        """Get the text to display based on current state."""
-        if self._state == OverlayState.LISTENING:
-            return f"Listening {self._format_time(self._elapsed_seconds)}"
-        elif self._state == OverlayState.LOADING:
-            return "Loading"
-        elif self._state == OverlayState.ERROR:
-            return "Error"
+    def _get_display_text(self, state: OverlayState, elapsed: float) -> str:
+        """Get the text to display based on state."""
+        if state == OverlayState.LISTENING:
+            return f"● Listening {self._format_time(elapsed)}"
+        elif state == OverlayState.LOADING:
+            return "⏳ Processing"
+        elif state == OverlayState.ERROR:
+            return "❌ Error"
         return ""
 
-    def _update_display(self) -> None:
-        """Update the overlay display."""
-        if self._page is None or self._text_control is None:
-            return
-        try:
-            text = self._get_display_text()
-            self._text_control.value = text
-            self._page.window.visible = self._state != OverlayState.HIDDEN
-            self._page.update()
-        except Exception:
-            pass
+    def _poll_loop(self) -> None:
+        """Periodically drain the update queue. Runs on a Flet-managed thread."""
+        import time as _time
 
-    def _run_app(self) -> None:
-        """Run the Flet app in a background thread."""
+        while self._running:
+            _time.sleep(0.1)
+            if not self._running:
+                break
+            self._drain_and_apply()
+
+        # On exit, try to destroy the window
+        if self._page is not None:
+            try:
+                self._page.window.destroy()
+                self._page.update()
+            except Exception:
+                pass
+
+    def run_main(self) -> None:
+        """Run the Flet app on the main thread. Blocks until stop() is called.
+
+        MUST be called from the main thread. This is the only method
+        that interacts with Flet's event loop directly.
+        """
         try:
             import flet as ft
 
@@ -131,7 +180,7 @@ class OverlayController:
                 )
 
                 # Container with black background, capsule shape
-                container = ft.Container(
+                self._container = ft.Container(
                     content=self._text_control,
                     bgcolor=ft.Colors.BLACK87,
                     border_radius=25,
@@ -141,7 +190,7 @@ class OverlayController:
 
                 page.add(
                     ft.Row(
-                        [container],
+                        [self._container],
                         alignment=ft.MainAxisAlignment.CENTER,
                     )
                 )
@@ -149,6 +198,10 @@ class OverlayController:
                 # Initially hidden
                 page.window.visible = False
                 page.update()
+
+                # Start the queue-polling thread via Flet's run_thread
+                # This ensures page.update() is called from a Flet-aware context
+                page.run_thread(self._poll_loop)
 
             ft.app(target=main, view=ft.AppView.FLET_APP)
         except Exception as e:

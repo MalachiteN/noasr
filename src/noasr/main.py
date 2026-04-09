@@ -4,6 +4,7 @@ import argparse
 import base64
 import json
 import sys
+import threading
 import time
 from typing import Optional
 
@@ -222,6 +223,9 @@ class NoasrRuntime:
     def run(self) -> int:
         """Run the main event loop.
 
+        The overlay (Flet) requires the main thread, so run_main() blocks here.
+        The polling loop (elapsed timer, auto-stop) runs in a background thread.
+
         Returns:
             Exit code (0 for normal exit).
         """
@@ -241,7 +245,7 @@ class NoasrRuntime:
                 print("Failed to initialize noasr", file=sys.stderr)
                 return 1
 
-            # Start overlay
+            # Start overlay (sets _running flag)
             self._overlay.start()
 
             # Start hotkey listener
@@ -252,20 +256,29 @@ class NoasrRuntime:
             print("noasr v0.1.0 - Voice input using MiMo Omni", file=sys.stderr)
             print("Press configured trigger key to start recording.", file=sys.stderr)
 
-            # Keep main thread alive
-            try:
-                while True:
-                    time.sleep(0.1)
-                    # Update overlay timer if listening
-                    if self._state == RuntimeState.LISTENING:
-                        elapsed = time.time() - self._recording_start_time
-                        self._overlay.update_elapsed(elapsed)
-                        # Auto-stop if max duration reached
-                        if elapsed >= MAX_RECORDING_DURATION:
-                            self._on_key_up(0)
-            except KeyboardInterrupt:
-                print("\nShutting down noasr...", file=sys.stderr)
+            # Run polling loop in background thread
+            def _poll_loop() -> None:
+                try:
+                    while self._overlay.state is not None:  # runs until overlay stops
+                        time.sleep(0.1)
+                        # Update overlay timer if listening
+                        if self._state == RuntimeState.LISTENING:
+                            elapsed = time.time() - self._recording_start_time
+                            self._overlay.update_elapsed(elapsed)
+                            # Auto-stop if max duration reached
+                            if elapsed >= MAX_RECORDING_DURATION:
+                                self._on_key_up(0)
+                except Exception:
+                    pass
 
+            poll_thread = threading.Thread(target=_poll_loop, daemon=True)
+            poll_thread.start()
+
+            # Run overlay on main thread (blocks until stop())
+            self._overlay.run_main()
+
+        except KeyboardInterrupt:
+            print("\nShutting down noasr...", file=sys.stderr)
         finally:
             # Cleanup (guard against partial initialization)
             if self._hotkey is not None:

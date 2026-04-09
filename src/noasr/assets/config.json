@@ -1,0 +1,14 @@
+{
+  "baseurl": "https://api.mi-fds.com/v1",
+  "api_key": "YOUR_API_KEY_HERE",
+  "toolsets": {
+    "default": ["GetCurrentDateTime"]
+  },
+  "agents": [
+    {
+      "name": "dictate",
+      "trigger": [62, 62],
+      "toolsets": ["default"]
+    }
+  ]
+}

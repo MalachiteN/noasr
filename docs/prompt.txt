@@ -1,0 +1,255 @@
+我希望实现一个使用小米 MiMo Omni 大模型的语音输入法。我将它起名叫 noasr，就像非关系型数据库叫 nosql 一样——noasr 表示它不通过 whisper 等 ASR 模型转录完文本再用 LLM 后处理，而是直接将原始语音和用户的词库等一起送进多模态大模型。
+
+## 模型调用示例
+
+以下是一次来自小米官网的 mimo omni 多模态输入调用示例
+
+```python
+import os
+from openai import OpenAI
+
+client = OpenAI(
+    api_key=os.environ.get("OPENAI_BASEURL"),
+    base_url=os.environ.get("OPENAI_API_KEY")
+)
+
+completion = client.chat.completions.create(
+    model="xiaomi/mimo-v2-omni",
+    messages=[
+        {
+            "role": "system",
+            "content": "You are MiMo, an AI assistant developed by Xiaomi. Today is date: Tuesday, December 16, 2025. Your knowledge cutoff date is December 2024."
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_audio",
+                    "input_audio": {
+                        "data": "https://example-files.cnbj1.mi-fds.com/example-files/audio/audio_example.wav"
+                    }
+                },
+                {
+                    "type": "text",
+                    "text": "please describe the content of the audio"
+                }
+            ]
+        }
+    ],
+    max_completion_tokens=1024
+)
+
+print(completion.model_dump_json())
+```
+
+```json
+{
+    "id": "439cea9ceedb4aa7937393b7bc728132",
+    "choices": [
+        {
+            "finish_reason": "stop",
+            "index": 0,
+            "message": {
+                "content": "The audio features a person asking, \"Good morning. Could you tell me what the weather will be like today?\"",
+                "role": "assistant",
+                "tool_calls": null,
+                "reasoning_content": "The user wants to know the weather for today based on the provided audio.\n1.  **Analyze the audio**: The user says \"Good morning. Could you tell me what the weather will be like today?\"\n2.  **Identify the intent**: The user is asking for a weather forecast.\n3.  **Check capabilities**: As an AI, I don't have real-time access to current weather data unless provided via a specific tool or context (which isn't available here). I also cannot \"listen\" to the audio to extract external data; I can only process the *content* of the audio provided in the prompt.\n4.  **Formulate the response**:\n*   Acknowledge the greeting (\"Good morning\").\n*   Address the request (\"Could you tell me what the weather will be like today?\").\n*   State the limitation: I cannot access real-time weather information.\n*   Suggest alternatives: Check a weather app, website, or ask a voice assistant with location access.\n5.  **Refine the response**: Since the user provided an audio file *of themselves asking*, and I am responding to the *transcript* of that audio, I should answer the question directly but politely explain my limitation regarding real-time data.\n\n**Drafting the response:**\n\"Good morning! Unfortunately, I don't have access to real-time weather data or your specific location to tell you what the weather is like today. You might want to check a weather app or a website like weather.com for the most accurate forecast in your area.\"\n\nWait, looking at the prompt structure again. The user provided an audio file and asked me to describe the content. Oh, wait, the prompt says \"Question: [Audio] ... please describe the content of the audio\".\nActually, the user's text input is: \"Question: [Audio] please describe the content of the audio\".\nNo, looking at the raw input provided in the prompt description:\nUser: [Audio]\nUser: \"please describe the content of the audio\"\n\nWait, let me re-read the prompt carefully.\nThe user uploaded an audio file.\nThe text accompanying it is \"please describe the content of the audio\".\nSo the task is to transcribe or describe what is said in the audio.\n\n**Step 1: Transcribe the audio.**\nAudio content: \"Good morning. Could you tell me what the weather will be like today?\"\n\n**Step 2: Describe the content.**\nThe audio contains a person asking a question about the weather forecast for the current day.\n\n**Step 3: Combine into a final answer.**\n\"The audio features a person speaking. They say, 'Good morning. Could you tell me what the weather will be like today?'\"\n\nLet's double-check the user's intent. \"please describe the content of the audio\".\nOkay, so I should transcribe it.\n\n**Final Plan:**\n1.  Transcribe the speech.\n2.  Mention the speaker is asking about the weather.\n\n**Response:**\nThe audio contains a voice saying: \"Good morning. Could you tell me what the weather will be like today?\" The speaker is asking for a weather forecast for the current day.\n\nLet's stick to a direct transcription as the primary description.\n\n**Transcription:** \"Good morning. Could you tell me what the weather will be like today?\"\n\nThis matches the audio perfectly. I will provide this transcription."
+            }
+        }
+    ],
+    "created": 1773832334,
+    "model": "xiaomi/mimo-v2-omni",
+    "object": "chat.completion",
+    "usage": {
+        "completion_tokens": 716,
+        "prompt_tokens": 86,
+        "total_tokens": 802,
+        "completion_tokens_details": {
+            "reasoning_tokens": 690
+        },
+        "prompt_tokens_details": {
+            "audio_tokens": 25,
+            "cached_tokens": 4
+        }
+    }
+}
+```
+
+而这是一个带工具调用的示例
+
+```python
+import os
+from openai import OpenAI
+
+client = OpenAI(
+    api_key=os.environ.get("OPENAI_BASEURL"),
+    base_url=os.environ.get("OPENAI_API_KEY")
+)
+
+completion = client.chat.completions.create(
+    model="xiaomi/mimo-v2-omni",
+    messages=[
+        {
+            "role": "system",
+            "content": "You are MiMo, an AI assistant developed by Xiaomi. Today is date: Tuesday, December 16, 2025. Your knowledge cutoff date is December 2024."
+        },
+        {
+            "role": "user",
+            "content": "What is the weather like in Boston today?"
+        }
+    ],
+    max_completion_tokens=1024,
+    tools=[
+        {
+            "type": "function",
+            "function": {
+                "name": "get_current_weather",
+                "description": "Get the current weather in a given location",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "location": {
+                            "type": "string",
+                            "description": "The city and state, e.g. San Francisco, CA"
+                        },
+                        "unit": {
+                            "type": "string",
+                            "enum": ["celsius", "fahrenheit"]
+                        }
+                    },
+                    "required": ["location"]
+                }
+            }
+        }
+    ],
+    tool_choice="auto"
+)
+
+print(completion.model_dump_json())
+```
+
+输出
+
+```json
+{
+    "id": "4642a0aed152489d81798cb20c4dd4c0",
+    "choices": [
+        {
+            "finish_reason": "tool_calls",
+            "index": 0,
+            "message": {
+                "content": "",
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "call_37c1b36594114d38848eadef",
+                        "function": {
+                            "arguments": "{\"location\": \"Boston, MA\"}",
+                            "name": "get_current_weather"
+                        },
+                        "type": "function"
+                    }
+                ],
+                "reasoning_content": "The user is asking about the weather in Boston today. I should use the get_current_weather function to get the weather information for Boston. I'll need to specify the location as \"Boston, MA\" (Boston, Massachusetts)."
+            }
+        }
+    ],
+    "created": 1773831391,
+    "model": "xiaomi/mimo-v2-omni",
+    "object": "chat.completion",
+    "usage": {
+        "completion_tokens": 71,
+        "prompt_tokens": 349,
+        "total_tokens": 420,
+        "completion_tokens_details": {
+            "reasoning_tokens": 45
+        },
+        "prompt_tokens_details": null
+    }
+}
+```
+
+其中 input_audio 对象的 data 字段应该可以传递 base64 形式的 URI。
+
+## 用户旅程与程序行为
+
+该输入法的逻辑可能会极其简单，只需要这样：
+
+### 一、启动阶段
+
+1. 用户启动该输入法（目前我们做MVP，先不配置开机启动相关功能）。该输入法先加载所有内置工具。读取一个位于 ~/.noasr/config.json 配置文件中的字段（如果这个路径不存在，则通过 python 文件系统操作相关 api 进行类似 mkdir -p 的操作，并向创建的路径释放一个模板配置文件，然后在命令行输出一行警告并退出。为了获取用户的家目录，应使用 python 文件系统操作相关 api，直接获取当前用户的 home，而不是尝试通过读环境变量或读用户名等方式尝试拼接，因为我们要跨平台，要是读环境变量或者用户名再探测操作系统来拼字符串会极其不优雅）。目前我们先不设计配置UI。
+  - 字符串 baseurl 表示 HTTP 端点。
+  - 字符串 api_key 表示 Bearer 认证使用的 API Key。
+  - 对象 toolsets 被用作一个【工具套组名】到【可用工具列表】的映射表：
+    - 每个键：一个字符串，表示工具套组名
+    - 每个值：一个字符串数组，表示可用的工具名。
+  - 对象数组 agents 中的每个元素是一个对象，其字段如下：
+    - 字符串 name 表示该 AgentType 的名字。 
+    - 二元整数数组 trigger 表示触发键按下和抬起的键代码（trigger[0] 按下，trigger[1] 抬起）。
+    - 字符串数组 toolsets 表示该 agent 可使用哪些工具套组，决定了它的能力。解析时，单个 AgentType 的工具套组列表指定的每个工具列表应被去重合并，展平成该 AgentType 能使用的工具列表。
+2. 配置读取完成后，该输入法从 ~/.noasr/input_user_prompt.md 加载主提示词。若不存在，释放一个模板文件并继续。
+3. 同时，该输入法从 ~/.noasr/input_system_prompt.md 加载个性化系统提示词文本。若不存在，创建一个空的 md 文件并继续。
+4. 同时，该输入法从 ~/.noasr/regex.json 加载正则替换规则 Registry。若不存在，创建一个空的JSON配置文件。
+5. 启动阶段结束，通过注册监听器的方式准备接受触发键按下事件。不要轮询，这会卡住用户的键盘输入法。这是不可接受的。选择的监听器也要尽可能地高性能，不能让键盘有任何延迟！
+
+### 二、运行阶段
+
+1. 用户【按下】触发键时触发输入法运行。它应该在用户的屏幕下端，在所有窗口顶层，显示一个极简的、黑底白字的横版胶囊形覆盖层，文本居中，显示“Listening MM:SS”（MM:SS表示分:秒的时间，需动态刷新），字体为系统默认、常规字形、无衬线、西文字体。千万不要夺走用户的窗口焦点和文本输入焦点！
+2. 从【按下】开始，立即启动系统麦克风录音（在内存中录音）。录制到【松开】为止。录音可能需要工作在一个单独的异步协程之类的。
+3. 当用户【松开】时，向 LLM 端点发送一条消息。不需要流式传输。message 数组由一条 system 消息（content 直接为 input_system_prompt.md 的字符串内容）和一条 user 消息 （content 有两项，一项是 input_user_prompt.md 的字符串内容，类型为 text，另一项则是刚刚录制的音频，类型为 input_audio，data 为音频 base64）
+4. 同时，屏幕覆盖层的文本变为 “Loading”，开始等待 LLM 的反馈。LLM 可能会思考，可能会调用工具，在后台处理这些。
+5. 获取 LLM 最终没有调用工具而停止的，最后一次 assistant 消息中的 choices[0].content 字符串到一个临时变量，并使用 ~/.noasr/regex.json 加载来的简单映射表对其进行正则替换。该 JSON 里面的内容会是 N 对字符串到字符串的映射。其中的键一定是一个正则（可能包含括号捕获组），值则是一个可能包含 $1 $2 等表示捕获组文本，也可能不包含它们的字符串。键和值都可能包含“\n”之类的转义字符，比如用户可能写个 `{ '回车': '\n', ... }` ，必须妥善处理。正则应按 registry 中的顺序 从上到下应用。
+6. 将应用了正则的结果一次性输出到光标下。不要伪流式。本轮运行结束。
+
+## 设计要求
+
+- 请直接使用 python openai 库和 python 内置的 json 模块，以及内置 dict 数据类型完成本项目。要求至少兼容 Linux、macOS、Windows。
+- 运行时允许占用一个终端。当用户在语音输入时，从 stderr 输出每次发送给 LLM 的完整 dict （序列化为JSON），以及端点每次的完整响应（JSON字符串）。用户要是想要无感使用，需要像在图形登录时写 fcitx & 那样，写 noasr 2>/dev/null &。
+- 必须要有以后扩展为 Agentic 输入法（将来允许LLM调用工具）的可扩展性。因此上述的流程，以及涉及的方法，全部都要抽象、可复用。本次 MVP 必须设计一个 ToolManager ，并设计一个 ITool 接口；必须设计一个 AgentType 类（用于给单个 Agent 提供可访问工具套组的JSON对象，同时绑定不同的触发键和提示词路径，例如按下抬起右 alt 键触发仅转录，而按下抬起右 ctrl 或 F2 等按键，则触发带特定工具组的 Agent 模式），一个 AgentManager 类（用来注册所有 Agents，给 Agent 提供 ReAct 循环）。
+- 先不编写具体的 input_system_prompt 和 input_user_prompt 模板，专注在代码上。这需要放在项目的 assets/ 下。我已经创建了两个空文件在那里占位。它将来会位于 noasr 包的安装路径下。在用户配置目录不存在、需拷贝这两个文件过去的时候，需要有办法能获取到 安装路径/assets/ 下的文件的真实路径。
+
+## 实施细则
+
+### ITool 要求
+
+设计成一个抽象接口，其中包含一个 function: dict，也就是拼装工具对象数组时，该工具使用的对象。包含一个 name 表示工具名，方便加载时的识别使用。包含一个 xeq(arguments: dict) -> str 方法，表示工具被调用时执行的方法（xeq 是 execute 的谐音），它的参数 arguments 是唯一的一个 dict，也就是模型回传的 arguments 对象；返回值是一个字符串，供外部使用。
+
+### ToolManager 类要求
+
+单例。要有 getInstance()。
+
+管理一个 toolDict: Dict[str, ITool]，工具名到具体工具对象的映射，在启动时先于 config.json 加载。
+
+提供一个装饰器 @agenttool，允许方便地将其装饰的、实现了 ITool 接口的类，创建其实例并加载进 toolDict。
+
+管理一个 toolSetReg: Dict[str, List[str]]，在加载配置文件时产生。
+
+提供一个 getToolSets(List[str]) -> List[dict] 方法，在方法内的临时变量中，通过 Set 去重的方式将传入数组中的每个字符串对应的 toolset 名称指定的 List[str] 合并去重，然后遍历它，以从 toolDict 取出对应的、真实的 List[ITool]，最后使用 map 和一个 lambda 表达式取出去重后的 ITool 中的所有 ITool.function 组成的 List[dict]，供外部调用LLM组装 tools 数组使用。
+
+提供一个 xeqTool(name: str, arguments: dict) -> str 方法，供外部使用名称和 arguments 调用某个已注册的工具。
+
+因为它只是一个输入法，我们将绝对不可能做任何可能改写系统状态的工具，因此不做用户授权批准工具执行的子系统。
+
+### AgentType 类要求
+
+基本上就是按照配置文件中的 agents 字段设计就可以了。
+
+### AgentManager 类要求
+
+管理一个 agentDict[str, AgentType]，将每个 AgentType.name 映射到具体对象。
+
+管理所有的触发器。
+
+提供一个装饰器 @agenttype，方便注册 AgentType 到 agentDict。每注册一个 AgentType，就要创建它的快捷键对应的抬起/放下触发器。
+
+提供一个 runAgent(str, dict) -> str，通过指定的 AgentType 名称从 agentDict 取配置，然后用 dict 中的初始消息记录，运行一个 Agent。开始推理的请求发出去之后，无限循环，等结果，如果本次循环包含 tool_calls 数组，表明不是最后一次，for tool in tool_calls 遍历每个工具，组装一个可能包括多个 `{ 'role': 'tool",  'tool_id': tool.id, 'content': ToolManager.getInstance().xeqTool(tool.function.name, tool.function.arguments) }` 的 List[dict] ，拼到消息记录尾巴上发出去，然后接着等结果。要是哪次消息里没有 tool_calls 了，就说明跑完了，返回响应转换成的 dict 的 choices[0].message.content
+
+因为这只是一个输入法，我们不持久化对话。因此很简单，现在不用做会话的序列化和反序列化了。
+
+### 其余类
+
+像维持主循环的类、绘制UI的类之类的，由你来把关设计即可。
+
+## 重要提示
+
+我在上面使用的代码都是伪代码，对于 dict 的访问都请用 get 方法，并提供难以失败的默认值，请不要让输入法崩溃退出。

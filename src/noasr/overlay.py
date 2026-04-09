@@ -7,11 +7,13 @@ and a Flet-managed background thread polls the queue to apply updates.
 """
 
 import queue
-import sys
-import threading
-from typing import Optional
+from typing import Callable, Optional
 
 from noasr.models import OverlayState
+
+
+class OverlayError(Exception):
+    """Raised when the overlay fails to start or encounters a fatal error."""
 
 
 class OverlayController:
@@ -26,9 +28,15 @@ class OverlayController:
       are safe to call from any thread — they enqueue state updates.
     - A Flet-managed background thread (via page.run_thread) drains the queue
       and calls page.update() on the Flet event loop, which is thread-safe.
+
+    Lifecycle:
+    - When the Flet window is closed by the user, the on_close callback
+      is invoked so the runtime can coordinate a clean shutdown.
+    - run_main() raises OverlayError if Flet fails to start; returns normally
+      on clean exit (window closed or stop() called).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, on_close: Optional[Callable[[], None]] = None) -> None:
         self._state = OverlayState.HIDDEN
         self._elapsed_seconds: float = 0.0
         self._page = None
@@ -36,6 +44,7 @@ class OverlayController:
         self._container = None
         self._running = False
         self._update_queue: queue.Queue = queue.Queue()
+        self._on_close = on_close
 
     @property
     def state(self) -> OverlayState:
@@ -141,68 +150,85 @@ class OverlayController:
                 pass
 
     def run_main(self) -> None:
-        """Run the Flet app on the main thread. Blocks until stop() is called.
+        """Run the Flet app on the main thread. Blocks until stop() or window close.
 
         MUST be called from the main thread. This is the only method
         that interacts with Flet's event loop directly.
+
+        Raises:
+            OverlayError: If Flet fails to start or encounters a fatal error.
         """
         try:
             import flet as ft
+        except ImportError as e:
+            raise OverlayError(
+                "Flet is not installed. Install with: pip install flet"
+            ) from e
 
-            def main(page: ft.Page) -> None:
-                self._page = page
-                page.title = "noasr"
-                page.window.width = 300
-                page.window.height = 50
-                page.window.resizable = False
-                page.bgcolor = ft.Colors.TRANSPARENT
-                page.window.bgcolor = ft.Colors.TRANSPARENT
-                page.window.maximized = False
-                page.window.full_screen = False
+        def main(page: ft.Page) -> None:
+            self._page = page
+            page.title = "noasr"
+            page.window.width = 300
+            page.window.height = 50
+            page.window.resizable = False
+            page.bgcolor = ft.Colors.TRANSPARENT
+            page.window.bgcolor = ft.Colors.TRANSPARENT
+            page.window.maximized = False
+            page.window.full_screen = False
 
-                # Position at bottom center
-                page.window.alignment = ft.WindowAlignment.CENTER
+            # Position at bottom center
+            page.window.alignment = ft.WindowAlignment.CENTER
 
-                # Try to make always on top and non-activating
-                try:
-                    page.window.always_on_top = True
-                    page.window.focused = False
-                except Exception:
-                    pass
+            # Try to make always on top and non-activating
+            try:
+                page.window.always_on_top = True
+                page.window.focused = False
+            except Exception:
+                pass
 
-                # Text control
-                self._text_control = ft.Text(
-                    value="",
-                    color=ft.Colors.WHITE,
-                    size=14,
-                    text_align=ft.TextAlign.CENTER,
-                    font_family="sans-serif",
+            # Wire window close event to trigger coordinated shutdown
+            def _on_window_event(e: ft.ControlEvent) -> None:
+                if e.data == "close":
+                    self._running = False
+                    if self._on_close is not None:
+                        self._on_close()
+
+            page.window.on_event = _on_window_event
+
+            # Text control
+            self._text_control = ft.Text(
+                value="",
+                color=ft.Colors.WHITE,
+                size=14,
+                text_align=ft.TextAlign.CENTER,
+                font_family="sans-serif",
+            )
+
+            # Container with black background, capsule shape
+            self._container = ft.Container(
+                content=self._text_control,
+                bgcolor=ft.Colors.BLACK87,
+                border_radius=25,
+                padding=ft.padding.symmetric(horizontal=20, vertical=8),
+                alignment=ft.alignment.center,
+            )
+
+            page.add(
+                ft.Row(
+                    [self._container],
+                    alignment=ft.MainAxisAlignment.CENTER,
                 )
+            )
 
-                # Container with black background, capsule shape
-                self._container = ft.Container(
-                    content=self._text_control,
-                    bgcolor=ft.Colors.BLACK87,
-                    border_radius=25,
-                    padding=ft.padding.symmetric(horizontal=20, vertical=8),
-                    alignment=ft.alignment.center,
-                )
+            # Initially hidden
+            page.window.visible = False
+            page.update()
 
-                page.add(
-                    ft.Row(
-                        [self._container],
-                        alignment=ft.MainAxisAlignment.CENTER,
-                    )
-                )
+            # Start the queue-polling thread via Flet's run_thread
+            # This ensures page.update() is called from a Flet-aware context
+            page.run_thread(self._poll_loop)
 
-                # Initially hidden
-                page.window.visible = False
-                page.update()
-
-                # Start the queue-polling thread via Flet's run_thread
-                # This ensures page.update() is called from a Flet-aware context
-                page.run_thread(self._poll_loop)
-
+        try:
             ft.app(target=main, view=ft.AppView.FLET_APP)
         except Exception as e:
-            print(f"Overlay error: {e}", file=sys.stderr)
+            raise OverlayError(f"Flet failed: {e}") from e

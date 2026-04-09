@@ -47,6 +47,7 @@ class NoasrRuntime:
         self._regex_processor: Optional[RegexProcessor] = None
         self._recording_start_time: float = 0.0
         self._active_agent: Optional[AgentType] = None
+        self._shutdown_event = threading.Event()
 
     @property
     def state(self) -> RuntimeState:
@@ -97,8 +98,8 @@ class NoasrRuntime:
         # Initialize audio recorder
         self._recorder = AudioRecorder()
 
-        # Initialize overlay
-        self._overlay = OverlayController()
+        # Initialize overlay (wire on_close to coordinated shutdown)
+        self._overlay = OverlayController(on_close=self._request_shutdown)
 
         # Initialize hotkey listener
         self._hotkey = HotkeyListener(
@@ -220,6 +221,14 @@ class NoasrRuntime:
         except Exception as e:
             print(f"Warning: overlay hide failed: {e}", file=sys.stderr)
 
+    def _request_shutdown(self) -> None:
+        """Signal all threads to shut down.
+
+        Called when: Flet window is closed, overlay exits, or Ctrl+C.
+        Safe to call multiple times. Actual cleanup happens in run()'s finally block.
+        """
+        self._shutdown_event.set()
+
     def run(self) -> int:
         """Run the main event loop.
 
@@ -227,7 +236,7 @@ class NoasrRuntime:
         The polling loop (elapsed timer, auto-stop) runs in a background thread.
 
         Returns:
-            Exit code (0 for normal exit).
+            Exit code (0 for normal exit, 1 for error).
         """
         # Bootstrap check
         is_first_run = check_and_bootstrap()
@@ -259,7 +268,7 @@ class NoasrRuntime:
             # Run polling loop in background thread
             def _poll_loop() -> None:
                 try:
-                    while self._overlay.state is not None:  # runs until overlay stops
+                    while not self._shutdown_event.is_set():
                         time.sleep(0.1)
                         # Update overlay timer if listening
                         if self._state == RuntimeState.LISTENING:
@@ -274,12 +283,20 @@ class NoasrRuntime:
             poll_thread = threading.Thread(target=_poll_loop, daemon=True)
             poll_thread.start()
 
-            # Run overlay on main thread (blocks until stop())
+            # Run overlay on main thread (blocks until window closes or stop())
             self._overlay.run_main()
+
+            # Overlay exited — trigger coordinated shutdown
+            self._request_shutdown()
 
         except KeyboardInterrupt:
             print("\nShutting down noasr...", file=sys.stderr)
+            self._request_shutdown()
+        except Exception as e:
+            print(f"Fatal error: {e}", file=sys.stderr)
+            self._request_shutdown()
         finally:
+            self._shutdown_event.set()
             # Cleanup (guard against partial initialization)
             if self._hotkey is not None:
                 self._hotkey.stop()

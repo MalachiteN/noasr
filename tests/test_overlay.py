@@ -6,7 +6,7 @@ from unittest import mock
 import pytest
 
 from noasr.models import OverlayState
-from noasr.overlay import OverlayController
+from noasr.overlay import OverlayController, OverlayError
 
 
 class TestOverlayControllerInitialState:
@@ -454,3 +454,86 @@ class TestOverlayControllerRunMain:
             ctrl.run_main()
         call_kwargs = mock_ft.app.call_args
         assert "target" in call_kwargs.kwargs or len(call_kwargs.args) > 0
+
+    def test_raises_overlay_error_when_flet_not_installed(self) -> None:
+        """Test that run_main raises OverlayError when Flet is not installed."""
+        ctrl = OverlayController()
+        with mock.patch.dict("sys.modules", {"flet": None}):
+            with pytest.raises(OverlayError, match="Flet is not installed"):
+                ctrl.run_main()
+
+    def test_raises_overlay_error_on_flet_failure(self) -> None:
+        """Test that run_main raises OverlayError when ft.app() fails."""
+        ctrl = OverlayController()
+        mock_ft = mock.MagicMock()
+        mock_ft.AppView.FLET_APP = "FLET_APP"
+        mock_ft.app.side_effect = RuntimeError("Display not available")
+        with mock.patch.dict("sys.modules", {"flet": mock_ft}):
+            with pytest.raises(OverlayError, match="Flet failed"):
+                ctrl.run_main()
+
+    def test_wires_window_close_event(self) -> None:
+        """Test that run_main wires the window on_event handler."""
+        ctrl = OverlayController()
+        mock_ft = mock.MagicMock()
+        mock_ft.AppView.FLET_APP = "FLET_APP"
+        captured_main = None
+
+        def capture_main(**kwargs):
+            nonlocal captured_main
+            captured_main = kwargs.get("target")
+
+        mock_ft.app.side_effect = capture_main
+
+        with mock.patch.dict("sys.modules", {"flet": mock_ft}):
+            ctrl.run_main()
+
+        # Call the captured main function with a mock page
+        assert captured_main is not None
+        mock_page = mock.MagicMock()
+        captured_main(mock_page)
+        assert mock_page.window.on_event is not None
+
+    def test_window_close_calls_on_close_callback(self) -> None:
+        """Test that closing the Flet window invokes the on_close callback."""
+        on_close = mock.MagicMock()
+        ctrl = OverlayController(on_close=on_close)
+        mock_ft = mock.MagicMock()
+        mock_ft.AppView.FLET_APP = "FLET_APP"
+        captured_main = None
+
+        def capture_main(**kwargs):
+            nonlocal captured_main
+            captured_main = kwargs.get("target")
+
+        mock_ft.app.side_effect = capture_main
+
+        with mock.patch.dict("sys.modules", {"flet": mock_ft}):
+            ctrl.run_main()
+
+        assert captured_main is not None
+        mock_page = mock.MagicMock()
+        captured_main(mock_page)
+
+        # Simulate window close event
+        close_event = mock.MagicMock()
+        close_event.data = "close"
+        mock_page.window.on_event(close_event)
+
+        on_close.assert_called_once()
+        assert ctrl._running is False
+
+
+class TestOverlayControllerOnClose:
+    """Test OverlayController on_close callback."""
+
+    def test_default_on_close_is_none(self) -> None:
+        """Test that on_close defaults to None."""
+        ctrl = OverlayController()
+        assert ctrl._on_close is None
+
+    def test_on_close_callback_stored(self) -> None:
+        """Test that on_close callback is stored."""
+        callback = mock.MagicMock()
+        ctrl = OverlayController(on_close=callback)
+        assert ctrl._on_close is callback

@@ -1,6 +1,7 @@
 """Tests for NoasrRuntime and main() in noasr.main."""
 
 import sys
+import threading
 from unittest import mock
 
 import pytest
@@ -561,6 +562,32 @@ class TestResetToIdle:
 
 
 # ---------------------------------------------------------------------------
+# Test: _request_shutdown()
+# ---------------------------------------------------------------------------
+
+
+class TestRequestShutdown:
+    """Test NoasrRuntime._request_shutdown()."""
+
+    def setup_method(self) -> None:
+        _reset_tool_manager()
+
+    def test_sets_shutdown_event(self) -> None:
+        """_request_shutdown should set the shutdown event."""
+        runtime, mocks = _make_runtime_with_mocks()
+        assert not runtime._shutdown_event.is_set()
+        runtime._request_shutdown()
+        assert runtime._shutdown_event.is_set()
+
+    def test_idempotent(self) -> None:
+        """_request_shutdown should be safe to call multiple times."""
+        runtime, mocks = _make_runtime_with_mocks()
+        runtime._request_shutdown()
+        runtime._request_shutdown()
+        assert runtime._shutdown_event.is_set()
+
+
+# ---------------------------------------------------------------------------
 # Test: run()
 # ---------------------------------------------------------------------------
 
@@ -672,6 +699,52 @@ class TestRun:
                             runtime.run()
 
         mock_release.assert_called_once()
+
+    def test_run_overlay_error_triggers_shutdown_and_cleanup(self) -> None:
+        """run() should trigger shutdown and cleanup when overlay raises OverlayError."""
+        from noasr.overlay import OverlayError
+
+        runtime = NoasrRuntime()
+        mock_overlay = mock.MagicMock()
+        mock_overlay.start = mock.MagicMock()
+        mock_overlay.run_main.side_effect = OverlayError("Flet failed")
+        mock_hotkey = mock.MagicMock()
+        mock_hotkey.start.return_value = True
+
+        with mock.patch("noasr.main.check_and_bootstrap", return_value=False):
+            with mock.patch("noasr.main.acquire_runtime_lock", return_value=True):
+                with mock.patch("noasr.main.release_runtime_lock"):
+                    with mock.patch.object(runtime, "initialize", return_value=True):
+                        runtime._overlay = mock_overlay
+                        runtime._hotkey = mock_hotkey
+
+                        result = runtime.run()
+
+        assert result == 0
+        assert runtime._shutdown_event.is_set()
+        mock_hotkey.stop.assert_called_once()
+        mock_overlay.stop.assert_called_once()
+
+    def test_run_on_close_triggers_shutdown_event(self) -> None:
+        """run() should set shutdown_event when on_close callback is invoked."""
+        runtime = NoasrRuntime()
+        mock_overlay = mock.MagicMock()
+        mock_hotkey = mock.MagicMock()
+        mock_hotkey.start.return_value = True
+
+        with mock.patch("noasr.main.check_and_bootstrap", return_value=False):
+            with mock.patch("noasr.main.acquire_runtime_lock", return_value=True):
+                with mock.patch("noasr.main.release_runtime_lock"):
+                    with mock.patch.object(runtime, "initialize", return_value=True):
+                        runtime._overlay = mock_overlay
+                        runtime._hotkey = mock_hotkey
+
+                        # Simulate: overlay.run_main() returns normally (window closed)
+                        # This triggers _request_shutdown()
+                        result = runtime.run()
+
+        assert result == 0
+        assert runtime._shutdown_event.is_set()
 
 
 # ---------------------------------------------------------------------------

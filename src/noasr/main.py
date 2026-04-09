@@ -105,6 +105,8 @@ class NoasrRuntime:
 
         # Initialize regex processor
         self._regex_processor = RegexProcessor()
+        registry = load_regex_registry()
+        self._regex_processor.load_rules(registry)
 
         return True
 
@@ -209,7 +211,7 @@ class NoasrRuntime:
 
         # Apply regex transformations
         if self._regex_processor and final_text:
-            final_text = self._regex_processor.process_text(final_text)
+            final_text = self._regex_processor.apply(final_text)
 
         # Inject text
         self._state = RuntimeState.APPLYING_RESULT

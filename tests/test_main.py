@@ -75,7 +75,11 @@ def _make_runtime_with_mocks() -> tuple[NoasrRuntime, dict]:
                                                 "noasr.main.RegexProcessor",
                                                 return_value=mock_regex,
                                             ):
-                                                runtime.initialize()
+                                                with mock.patch(
+                                                    "noasr.main.load_regex_registry",
+                                                    return_value={},
+                                                ):
+                                                    runtime.initialize()
 
     mocks = {
         "agent_manager": mock_agent_manager,
@@ -439,7 +443,7 @@ class TestProcessRecording:
         runtime._active_agent.name = "dictate"
 
         mocks["agent_manager"].run_agent.return_value = "Hello world"
-        mocks["regex"].process_text.return_value = "Hello world"
+        mocks["regex"].apply.return_value = "Hello world"
 
         with mock.patch("noasr.main.load_system_prompt", return_value="sys"):
             with mock.patch("noasr.main.load_user_prompt", return_value="user"):
@@ -450,7 +454,7 @@ class TestProcessRecording:
         assert call_args[0][0] == "dictate"
         assert call_args[0][2] is mocks["client"]
 
-        mocks["regex"].process_text.assert_called_once_with("Hello world")
+        mocks["regex"].apply.assert_called_once_with("Hello world")
         mocks["injector"].inject.assert_called_once_with("Hello world")
         assert runtime.state == RuntimeState.IDLE
 
@@ -462,7 +466,7 @@ class TestProcessRecording:
         runtime._active_agent.name = "dictate"
 
         mocks["agent_manager"].run_agent.return_value = ""
-        mocks["regex"].process_text.return_value = ""
+        mocks["regex"].apply.return_value = ""
 
         with mock.patch("noasr.main.load_system_prompt", return_value=""):
             with mock.patch("noasr.main.load_user_prompt", return_value=""):
@@ -478,7 +482,7 @@ class TestProcessRecording:
         runtime._active_agent.name = "dictate"
 
         mocks["agent_manager"].run_agent.return_value = "   "
-        mocks["regex"].process_text.return_value = "   "
+        mocks["regex"].apply.return_value = "   "
 
         with mock.patch("noasr.main.load_system_prompt", return_value=""):
             with mock.patch("noasr.main.load_user_prompt", return_value=""):
@@ -495,7 +499,7 @@ class TestProcessRecording:
         mocks["client"].send.return_value = {
             "choices": [{"message": {"content": "Fallback text"}}]
         }
-        mocks["regex"].process_text.return_value = "Fallback text"
+        mocks["regex"].apply.return_value = "Fallback text"
 
         with mock.patch("noasr.main.load_system_prompt", return_value="sys"):
             with mock.patch("noasr.main.load_user_prompt", return_value="user"):
@@ -526,7 +530,7 @@ class TestProcessRecording:
         runtime._active_agent.name = "dictate"
 
         mocks["agent_manager"].run_agent.return_value = "Hello world"
-        mocks["regex"].process_text.return_value = "Hello transformed"
+        mocks["regex"].apply.return_value = "Hello transformed"
 
         with mock.patch("noasr.main.load_system_prompt", return_value=""):
             with mock.patch("noasr.main.load_user_prompt", return_value=""):

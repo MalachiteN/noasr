@@ -54,16 +54,3 @@ class GetCurrentDateTime(ITool):
             return now.strftime("%A, %B %d, %Y at %I:%M %p")
         else:
             return now.isoformat()
-
-
-# Register the tool instance when module is imported
-def _register_datetime_tool() -> None:
-    """Register the datetime tool on module import."""
-    from noasr.tools import ToolManager
-
-    tool = GetCurrentDateTime()
-    ToolManager.get_instance().register_tool(tool)
-
-
-# Auto-register when imported
-_register_datetime_tool()

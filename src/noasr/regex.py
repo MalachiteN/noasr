@@ -6,8 +6,8 @@ import sys
 from collections.abc import Iterator
 from pathlib import Path
 
-DEFAULT_CONFIG_DIR = Path.home() / ".noasr"
-REGEX_FILENAME = "regex.json"
+from noasr.config import DEFAULT_CONFIG_DIR
+from noasr.constants import REGEX_FILENAME
 
 
 class RegexProcessorError(Exception):
@@ -266,45 +266,11 @@ def load_rules_from_dict(
 
 
 def _convert_dollar_refs(replacement: str) -> str:
+    """Convert $N capture group references to \\N format.
+
+    Delegates to RegexProcessor._convert_dollar_refs to avoid duplication.
     """
-    Convert $N capture group references to \\N format.
-
-    Handles $10, $11 etc. by checking if the digit after $ forms
-    a valid group number. Also handles escaped $ (\\$) to produce literal $.
-
-    Args:
-        replacement: Replacement string with potential $N refs
-
-    Returns:
-        String with $N converted to \\N
-    """
-    result = []
-    i = 0
-    while i < len(replacement):
-        if replacement[i] == "\\" and i + 1 < len(replacement):
-            # Escaped character - keep as-is (but unescape \$ to $)
-            if replacement[i + 1] == "$":
-                result.append("$")
-                i += 2
-            else:
-                result.append(replacement[i])
-                result.append(replacement[i + 1])
-                i += 2
-        elif replacement[i] == "$" and i + 1 < len(replacement):
-            # Potential capture group reference
-            digit = replacement[i + 1]
-            if digit.isdigit():
-                # Convert $N to \\N for Python re.sub
-                result.append("\\")
-                result.append(digit)
-                i += 2
-            else:
-                result.append(replacement[i])
-                i += 1
-        else:
-            result.append(replacement[i])
-            i += 1
-    return "".join(result)
+    return RegexProcessor._convert_dollar_refs(None, replacement)
 
 
 def apply_rules(

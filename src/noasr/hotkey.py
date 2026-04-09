@@ -4,8 +4,6 @@ import sys
 import threading
 from typing import Callable, Optional
 
-from noasr.models import OverlayState
-
 
 class HotkeyListener:
     """Listens for global hotkey press/release using pynput.

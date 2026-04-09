@@ -142,5 +142,8 @@ Thumbs.db
 # Evidence files (keep for now)
 .sisyphus/evidence/
 
+# Sisyphus local state
+.sisyphus/ralph-loop.local.md
+
 # Virtual environment
 .venv/

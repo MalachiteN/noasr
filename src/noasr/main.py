@@ -170,10 +170,20 @@ class NoasrRuntime:
         # Process with LLM
         try:
             self._process_recording(audio_data_uri)
-        except Exception as e:
-            print(f"Processing error: {e}", file=sys.stderr)
+        except ConnectionError as e:
+            print(f"Connection error: {e}", file=sys.stderr)
             self._overlay.show_error()
-            time.sleep(1.0)
+            time.sleep(1.5)
+            self._reset_to_idle()
+        except RuntimeError as e:
+            print(f"API error: {e}", file=sys.stderr)
+            self._overlay.show_error()
+            time.sleep(1.5)
+            self._reset_to_idle()
+        except Exception as e:
+            print(f"Unexpected error: {type(e).__name__}: {e}", file=sys.stderr)
+            self._overlay.show_error()
+            time.sleep(1.5)
             self._reset_to_idle()
 
     def _process_recording(self, audio_data_uri: str) -> None:

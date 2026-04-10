@@ -117,6 +117,10 @@ class MiMoClient:
 
         Returns:
             Raw response dict with 'choices' key.
+
+        Raises:
+            ConnectionError: On network/transport failures with detail.
+            RuntimeError: On API errors (auth, rate limit, server error).
         """
         kwargs: dict[str, Any] = {
             "model": model,
@@ -133,8 +137,48 @@ class MiMoClient:
         # Log request
         self._log_request(kwargs)
 
-        # Make request
-        completion = self._transport.create_completion(**kwargs)
+        # Make request with detailed error handling
+        try:
+            completion = self._transport.create_completion(**kwargs)
+        except Exception as e:
+            # Unwrap OpenAI SDK exceptions to get the real cause
+            cause = e.__cause__ if e.__cause__ else e
+            error_type = type(e).__name__
+            cause_type = type(cause).__name__
+
+            # Build a descriptive error message
+            parts = [f"{error_type}"]
+            if cause is not e:
+                parts.append(f"caused by {cause_type}: {cause}")
+            else:
+                parts.append(str(e))
+
+            # Add hint based on common patterns
+            msg_lower = str(cause).lower()
+            if "timeout" in msg_lower:
+                parts.append("(request timed out — check network or increase timeout)")
+            elif "refused" in msg_lower or "connection" in msg_lower:
+                parts.append("(could not reach server — check baseurl in config)")
+            elif "ssl" in msg_lower or "certificate" in msg_lower:
+                parts.append("(SSL/TLS error — check if baseurl uses https)")
+            elif "401" in str(e) or "unauthorized" in msg_lower:
+                parts.append("(authentication failed — check api_key in config)")
+            elif "429" in str(e) or "rate" in msg_lower:
+                parts.append("(rate limited — wait and retry)")
+            elif "500" in str(e) or "502" in str(e) or "503" in str(e):
+                parts.append("(server error — the API endpoint may be down)")
+
+            detail = " ".join(parts)
+            print(f"[MiMo ERROR] {detail}", file=sys.stderr, flush=True)
+
+            # Re-raise as a descriptive error
+            if (
+                "connection" in msg_lower
+                or "timeout" in msg_lower
+                or "refused" in msg_lower
+            ):
+                raise ConnectionError(detail) from e
+            raise RuntimeError(detail) from e
 
         # Log response
         response_json = completion.model_dump_json()

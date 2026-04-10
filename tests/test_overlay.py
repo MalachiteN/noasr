@@ -395,23 +395,23 @@ class TestOverlayControllerDrainAndApply:
         assert ctrl._text_control.value == "⏳ Processing"
         assert ctrl._update_queue.qsize() == 0
 
-    def test_sets_window_visible_true_when_not_hidden(self) -> None:
-        """Test that _drain_and_apply sets window visible to True when not HIDDEN."""
+    def test_sets_window_opacity_1_when_not_hidden(self) -> None:
+        """Test that _drain_and_apply sets window opacity to 1.0 when not HIDDEN."""
         ctrl = OverlayController()
         ctrl._page = mock.MagicMock()
         ctrl._text_control = mock.MagicMock()
         ctrl._enqueue(OverlayState.LOADING, 0.0)
         ctrl._drain_and_apply()
-        assert ctrl._page.window.visible is True
+        assert ctrl._page.window.opacity == 1.0
 
-    def test_sets_window_visible_false_when_hidden(self) -> None:
-        """Test that _drain_and_apply sets window visible to False when HIDDEN."""
+    def test_sets_window_opacity_0_when_hidden(self) -> None:
+        """Test that _drain_and_apply sets window opacity to 0.0 when HIDDEN."""
         ctrl = OverlayController()
         ctrl._page = mock.MagicMock()
         ctrl._text_control = mock.MagicMock()
         ctrl._enqueue(OverlayState.HIDDEN, 0.0)
         ctrl._drain_and_apply()
-        assert ctrl._page.window.visible is False
+        assert ctrl._page.window.opacity == 0.0
 
     def test_calls_page_update(self) -> None:
         """Test that _drain_and_apply calls page.update()."""
@@ -488,10 +488,12 @@ class TestOverlayControllerRunMain:
         with mock.patch.dict("sys.modules", {"flet": mock_ft}):
             ctrl.run_main()
 
-        # Call the captured main function with a mock page
+        # Call the captured async main function with a mock page
         assert captured_main is not None
         mock_page = mock.MagicMock()
-        captured_main(mock_page)
+        import asyncio
+
+        asyncio.get_event_loop().run_until_complete(captured_main(mock_page))
         assert mock_page.window.on_event is not None
 
     def test_window_close_calls_on_close_callback(self) -> None:
@@ -500,6 +502,7 @@ class TestOverlayControllerRunMain:
         ctrl = OverlayController(on_close=on_close)
         mock_ft = mock.MagicMock()
         mock_ft.AppView.FLET_APP = "FLET_APP"
+        mock_ft.WindowEventType.CLOSE = "close"
         captured_main = None
 
         def capture_main(**kwargs):
@@ -513,11 +516,13 @@ class TestOverlayControllerRunMain:
 
         assert captured_main is not None
         mock_page = mock.MagicMock()
-        captured_main(mock_page)
+        import asyncio
+
+        asyncio.get_event_loop().run_until_complete(captured_main(mock_page))
 
         # Simulate window close event
         close_event = mock.MagicMock()
-        close_event.data = "close"
+        close_event.type = "close"
         mock_page.window.on_event(close_event)
 
         on_close.assert_called_once()

@@ -3,10 +3,19 @@
 Flet requires the main thread (it calls signal.signal internally).
 Therefore run_main() must be called from the main thread — it blocks.
 All state changes from background threads go through a queue,
-and a Flet-managed background thread polls the queue to apply updates.
+and an asyncio task on Flet's event loop drains the queue and applies updates.
+
+The window is always present but hidden via opacity=0.0.
+When active, opacity is set to 1.0 to reveal the overlay.
+Position: horizontally centered, vertically at 5% from the bottom of the screen.
+
+Flet 0.84+ requires async main + page.run_task() for reliable UI updates.
+Using page.run_thread() + page.update() does NOT reliably trigger rendering.
 """
 
+import asyncio
 import queue
+import sys
 from typing import Callable, Optional
 
 from noasr.models import OverlayState
@@ -14,6 +23,22 @@ from noasr.models import OverlayState
 
 class OverlayError(Exception):
     """Raised when the overlay fails to start or encounters a fatal error."""
+
+
+def _get_screen_size() -> tuple[int, int]:
+    """Get the primary screen size in pixels. Returns (width, height)."""
+    if sys.platform == "win32":
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        return user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+    # Fallback for non-Windows: reasonable defaults
+    return 1920, 1080
+
+
+# Overlay window dimensions
+_WINDOW_WIDTH = 320
+_WINDOW_HEIGHT = 56
 
 
 class OverlayController:
@@ -26,10 +51,12 @@ class OverlayController:
     - run_main() MUST be called from the main thread (blocks until stop).
     - show_listening(), show_loading(), show_error(), hide(), update_elapsed()
       are safe to call from any thread — they enqueue state updates.
-    - A Flet-managed background thread (via page.run_thread) drains the queue
-      and calls page.update() on the Flet event loop, which is thread-safe.
+    - An asyncio task on Flet's event loop (via page.run_task) drains the queue
+      and calls page.update(), which reliably triggers rendering.
 
     Lifecycle:
+    - The window starts with opacity=0 (invisible but present).
+    - Show/hide toggles opacity between 1.0 and 0.0.
     - When the Flet window is closed by the user, the on_close callback
       is invoked so the runtime can coordinate a clean shutdown.
     - run_main() raises OverlayError if Flet fails to start; returns normally
@@ -82,7 +109,7 @@ class OverlayController:
             self._enqueue(OverlayState.LISTENING, elapsed)
 
     def _enqueue(self, state: OverlayState, elapsed: float = 0.0) -> None:
-        """Enqueue a state change for the UI thread to process."""
+        """Enqueue a state change for the UI task to process."""
         self._state = state
         self._elapsed_seconds = elapsed
         self._update_queue.put((state, elapsed))
@@ -90,7 +117,8 @@ class OverlayController:
     def _drain_and_apply(self) -> None:
         """Drain all pending state updates and apply the latest one.
 
-        Called on a Flet-managed thread, so page.update() is safe.
+        Called on Flet's event loop via an asyncio task, so page.update()
+        reliably triggers rendering.
         """
         latest_state: Optional[OverlayState] = None
         latest_elapsed: float = 0.0
@@ -110,7 +138,10 @@ class OverlayController:
         try:
             text = self._get_display_text(latest_state, latest_elapsed)
             self._text_control.value = text
-            self._page.window.visible = latest_state != OverlayState.HIDDEN
+            # Toggle opacity: 1.0 when active, 0.0 when hidden
+            self._page.window.opacity = (
+                1.0 if latest_state != OverlayState.HIDDEN else 0.0
+            )
             self._page.update()
         except Exception:
             pass
@@ -131,23 +162,17 @@ class OverlayController:
             return "❌ Error"
         return ""
 
-    def _poll_loop(self) -> None:
-        """Periodically drain the update queue. Runs on a Flet-managed thread."""
-        import time as _time
+    async def _poll_task(self) -> None:
+        """Periodically drain the update queue. Runs as an asyncio task on Flet's event loop.
 
+        Using asyncio.sleep + page.update() from Flet's event loop ensures
+        reliable UI rendering (unlike page.run_thread + page.update).
+        """
         while self._running:
-            _time.sleep(0.1)
+            await asyncio.sleep(0.1)
             if not self._running:
                 break
             self._drain_and_apply()
-
-        # On exit, try to destroy the window
-        if self._page is not None:
-            try:
-                self._page.window.destroy()
-                self._page.update()
-            except Exception:
-                pass
 
     def run_main(self) -> None:
         """Run the Flet app on the main thread. Blocks until stop() or window close.
@@ -165,30 +190,37 @@ class OverlayController:
                 "Flet is not installed. Install with: pip install flet"
             ) from e
 
-        def main(page: ft.Page) -> None:
+        # Calculate window position: horizontal center, 5% from bottom
+        screen_w, screen_h = _get_screen_size()
+        win_left = (screen_w - _WINDOW_WIDTH) // 2
+        win_top = int(screen_h * 0.95) - _WINDOW_HEIGHT
+
+        async def main(page: ft.Page) -> None:
             self._page = page
             page.title = "noasr"
-            page.window.width = 300
-            page.window.height = 50
+
+            # Frameless, always-on-top overlay capsule
+            page.window.width = _WINDOW_WIDTH
+            page.window.height = _WINDOW_HEIGHT
+            page.window.left = win_left
+            page.window.top = win_top
             page.window.resizable = False
+            page.window.frameless = True
+            page.window.skip_task_bar = True
+            page.window.always_on_top = True
+            page.window.focused = False
+            page.window.shadow = False
+
+            # Start invisible (opacity 0)
+            page.window.opacity = 0.0
+
+            # Transparent backgrounds so only the capsule is visible
             page.bgcolor = ft.Colors.TRANSPARENT
             page.window.bgcolor = ft.Colors.TRANSPARENT
-            page.window.maximized = False
-            page.window.full_screen = False
-
-            # Position at bottom center
-            page.window.alignment = ft.WindowAlignment.CENTER
-
-            # Try to make always on top and non-activating
-            try:
-                page.window.always_on_top = True
-                page.window.focused = False
-            except Exception:
-                pass
 
             # Wire window close event to trigger coordinated shutdown
-            def _on_window_event(e: ft.ControlEvent) -> None:
-                if e.data == "close":
+            def _on_window_event(e: ft.WindowEvent) -> None:
+                if e.type == ft.WindowEventType.CLOSE:
                     self._running = False
                     if self._on_close is not None:
                         self._on_close()
@@ -207,10 +239,10 @@ class OverlayController:
             # Container with black background, capsule shape
             self._container = ft.Container(
                 content=self._text_control,
-                bgcolor=ft.Colors.BLACK87,
+                bgcolor=ft.Colors.BLACK_87,
                 border_radius=25,
-                padding=ft.padding.symmetric(horizontal=20, vertical=8),
-                alignment=ft.alignment.center,
+                padding=ft.Padding.symmetric(horizontal=20, vertical=8),
+                alignment=ft.Alignment.CENTER,
             )
 
             page.add(
@@ -220,13 +252,11 @@ class OverlayController:
                 )
             )
 
-            # Initially hidden
-            page.window.visible = False
             page.update()
 
-            # Start the queue-polling thread via Flet's run_thread
-            # This ensures page.update() is called from a Flet-aware context
-            page.run_thread(self._poll_loop)
+            # Start the poll task on Flet's event loop (async, not thread)
+            # This ensures page.update() reliably triggers rendering
+            page.run_task(self._poll_task)
 
         try:
             ft.app(target=main, view=ft.AppView.FLET_APP)

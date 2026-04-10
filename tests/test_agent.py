@@ -106,18 +106,14 @@ class TestAgentManager:
     def test_get_agent_for_trigger(self) -> None:
         """Test finding agent by trigger key code."""
         mgr = AgentManager()
-        mgr.register(
-            AgentType(AgentConfig(name="dictate", trigger=[62, 62], toolsets=[]))
-        )
-        mgr.register(
-            AgentType(AgentConfig(name="agent2", trigger=[63, 63], toolsets=[]))
-        )
+        mgr.register(AgentType(AgentConfig(name="dictate", trigger=165, toolsets=[])))
+        mgr.register(AgentType(AgentConfig(name="agent2", trigger=115, toolsets=[])))
 
-        found = mgr.get_agent_for_trigger(62)
+        found = mgr.get_agent_for_trigger(165)
         assert found is not None
         assert found.name == "dictate"
 
-        found2 = mgr.get_agent_for_trigger(63)
+        found2 = mgr.get_agent_for_trigger(115)
         assert found2 is not None
         assert found2.name == "agent2"
 

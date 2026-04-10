@@ -49,7 +49,7 @@ class AgentConfig:
     """Agent configuration."""
 
     name: str = ""
-    trigger: list[int] = field(default_factory=list)
+    trigger: int = 0
     toolsets: list[str] = field(default_factory=list)
     system_prompt_file: str = "input_system_prompt.md"
     user_prompt_file: str = "input_user_prompt.md"
@@ -59,7 +59,7 @@ class AgentConfig:
         """Create agent config from dictionary with safe defaults."""
         return cls(
             name=data.get("name", ""),
-            trigger=data.get("trigger", []),
+            trigger=int(data.get("trigger", 0)),
             toolsets=data.get("toolsets", []),
             system_prompt_file=data.get("system_prompt_file", "input_system_prompt.md"),
             user_prompt_file=data.get("user_prompt_file", "input_user_prompt.md"),

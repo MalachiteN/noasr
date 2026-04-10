@@ -101,20 +101,20 @@ class TestAgentConfig:
         agent = models.AgentConfig()
 
         assert agent.name == ""
-        assert agent.trigger == []
+        assert agent.trigger == 0
         assert agent.toolsets == []
 
     def test_from_dict(self) -> None:
-        """Test that from_dict correctly parses agent config."""
+        """Test that from_dict correctly parses agent config with int trigger."""
         data = {
             "name": "dictate",
-            "trigger": [62, 62],
+            "trigger": 165,
             "toolsets": ["default"],
         }
         agent = models.AgentConfig.from_dict(data)
 
         assert agent.name == "dictate"
-        assert agent.trigger == [62, 62]
+        assert agent.trigger == 165
         assert agent.toolsets == ["default"]
 
 

@@ -31,6 +31,7 @@ class _FakeKey(enum.Enum):
 
     alt_l = "alt_l"
     alt_r = "alt_r"
+    alt_gr = "alt_gr"
     ctrl_l = "ctrl_l"
     ctrl_r = "ctrl_r"
     f1 = "f1"
@@ -49,7 +50,13 @@ class _FakeKey(enum.Enum):
     tab = "tab"
     enter = "enter"
     shift = "shift"
+    shift_l = "shift_l"
+    shift_r = "shift_r"
     caps_lock = "caps_lock"  # extra member for "unknown key" test
+    cmd = "cmd"
+    cmd_l = "cmd_l"
+    cmd_r = "cmd_r"
+    home = "home"  # not in key_map, used for "unknown key" test
 
 
 # Build a fake ``pynput.keyboard`` module that HotkeyListener imports at
@@ -255,21 +262,20 @@ class TestHotkeyListenerGetKeyCode:
         assert listener._get_key_code(key) is None
 
     def test_key_enum_maps_to_virtual_key_code(self) -> None:
-        """_get_key_code maps Key enum values to virtual key codes."""
+        """_get_key_code maps Key enum values to Windows virtual key codes."""
         listener = HotkeyListener()
-        # Access the fake Key members from sys.modules
         from pynput.keyboard import Key
 
-        assert listener._get_key_code(Key.alt_l) == 56
-        assert listener._get_key_code(Key.alt_r) == 62
-        assert listener._get_key_code(Key.ctrl_l) == 29
-        assert listener._get_key_code(Key.ctrl_r) == 63
-        assert listener._get_key_code(Key.f1) == 59
-        assert listener._get_key_code(Key.f12) == 88
-        assert listener._get_key_code(Key.space) == 57
-        assert listener._get_key_code(Key.tab) == 15
-        assert listener._get_key_code(Key.enter) == 28
-        assert listener._get_key_code(Key.shift) == 42
+        assert listener._get_key_code(Key.alt_l) == 0xA4  # VK_LMENU = 164
+        assert listener._get_key_code(Key.alt_r) == 0xA5  # VK_RMENU = 165
+        assert listener._get_key_code(Key.ctrl_l) == 0xA2  # VK_LCONTROL = 162
+        assert listener._get_key_code(Key.ctrl_r) == 0xA3  # VK_RCONTROL = 163
+        assert listener._get_key_code(Key.f1) == 0x70  # VK_F1 = 112
+        assert listener._get_key_code(Key.f12) == 0x7B  # VK_F12 = 123
+        assert listener._get_key_code(Key.space) == 0x20  # VK_SPACE = 32
+        assert listener._get_key_code(Key.tab) == 0x09  # VK_TAB = 9
+        assert listener._get_key_code(Key.enter) == 0x0D  # VK_RETURN = 13
+        assert listener._get_key_code(Key.shift) == 0x10  # VK_SHIFT = 16
 
     def test_unknown_key_returns_none(self) -> None:
         """_get_key_code returns None for unknown key types."""
@@ -279,8 +285,8 @@ class TestHotkeyListenerGetKeyCode:
     def test_unknown_key_enum_returns_none(self) -> None:
         """_get_key_code returns None for Key enum values not in the map."""
         listener = HotkeyListener()
-        # caps_lock is in our fake enum but not in the key_map inside _get_key_code
-        assert listener._get_key_code(_FakeKey.caps_lock) is None
+        # home is in our fake enum but not in the key_map inside _get_key_code
+        assert listener._get_key_code(_FakeKey.home) is None
 
 
 class TestHotkeyListenerCallbacks:

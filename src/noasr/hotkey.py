@@ -74,7 +74,10 @@ class HotkeyListener:
             self._listener = None
 
     def _get_key_code(self, key) -> Optional[int]:
-        """Extract virtual key code from pynput key."""
+        """Extract virtual key code from pynput key.
+
+        Returns Windows Virtual Key codes so config values are portable.
+        """
         try:
             from pynput.keyboard import KeyCode, Key
 
@@ -87,28 +90,35 @@ class HotkeyListener:
                     else None
                 )
             elif isinstance(key, Key):
-                # Map common keys to virtual key codes
+                # Windows Virtual Key codes
                 key_map = {
-                    Key.alt_l: 56,
-                    Key.alt_r: 62,
-                    Key.ctrl_l: 29,
-                    Key.ctrl_r: 63,
-                    Key.f1: 59,
-                    Key.f2: 60,
-                    Key.f3: 61,
-                    Key.f4: 62,
-                    Key.f5: 63,
-                    Key.f6: 64,
-                    Key.f7: 65,
-                    Key.f8: 66,
-                    Key.f9: 67,
-                    Key.f10: 68,
-                    Key.f11: 87,
-                    Key.f12: 88,
-                    Key.space: 57,
-                    Key.tab: 15,
-                    Key.enter: 28,
-                    Key.shift: 42,
+                    Key.alt_l: 0xA4,  # VK_LMENU = 164
+                    Key.alt_r: 0xA5,  # VK_RMENU = 165
+                    Key.alt_gr: 0xA5,  # VK_RMENU = 165
+                    Key.ctrl_l: 0xA2,  # VK_LCONTROL = 162
+                    Key.ctrl_r: 0xA3,  # VK_RCONTROL = 163
+                    Key.f1: 0x70,  # VK_F1 = 112
+                    Key.f2: 0x71,  # VK_F2 = 113
+                    Key.f3: 0x72,  # VK_F3 = 114
+                    Key.f4: 0x73,  # VK_F4 = 115
+                    Key.f5: 0x74,  # VK_F5 = 116
+                    Key.f6: 0x75,  # VK_F6 = 117
+                    Key.f7: 0x76,  # VK_F7 = 118
+                    Key.f8: 0x77,  # VK_F8 = 119
+                    Key.f9: 0x78,  # VK_F9 = 120
+                    Key.f10: 0x79,  # VK_F10 = 121
+                    Key.f11: 0x7A,  # VK_F11 = 122
+                    Key.f12: 0x7B,  # VK_F12 = 123
+                    Key.space: 0x20,  # VK_SPACE = 32
+                    Key.tab: 0x09,  # VK_TAB = 9
+                    Key.enter: 0x0D,  # VK_RETURN = 13
+                    Key.shift: 0x10,  # VK_SHIFT = 16
+                    Key.shift_l: 0xA0,  # VK_LSHIFT = 160
+                    Key.shift_r: 0xA1,  # VK_RSHIFT = 161
+                    Key.caps_lock: 0x14,  # VK_CAPITAL = 20
+                    Key.cmd: 0x5B,  # VK_LWIN = 91
+                    Key.cmd_l: 0x5B,  # VK_LWIN = 91
+                    Key.cmd_r: 0x5C,  # VK_RWIN = 92
                 }
                 return key_map.get(key)
         except Exception:

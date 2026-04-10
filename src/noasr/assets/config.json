@@ -7,7 +7,7 @@
   "agents": [
     {
       "name": "dictate",
-      "trigger": [62, 62],
+      "trigger": 165,
       "toolsets": ["default"],
       "system_prompt_file": "input_system_prompt.md",
       "user_prompt_file": "input_user_prompt.md"

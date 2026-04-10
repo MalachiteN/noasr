@@ -28,8 +28,8 @@ class AgentType:
         return self._name
 
     @property
-    def trigger(self) -> list[int]:
-        """Trigger key codes [down, up]."""
+    def trigger(self) -> int:
+        """Trigger key code."""
         return self._trigger
 
     @property
@@ -66,12 +66,9 @@ class AgentManager:
         return list(self._agent_dict.keys())
 
     def get_agent_for_trigger(self, key_code: int) -> AgentType | None:
-        """Find an agent whose trigger matches the given key code.
-
-        For single-key hold-to-record, the trigger is [key_code, key_code].
-        """
+        """Find an agent whose trigger matches the given key code."""
         for agent in self._agent_dict.values():
-            if len(agent.trigger) >= 1 and agent.trigger[0] == key_code:
+            if agent.trigger == key_code:
                 return agent
         return None
 

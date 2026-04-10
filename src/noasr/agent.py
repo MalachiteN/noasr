@@ -199,7 +199,7 @@ def agenttype(config: AgentConfig) -> Callable[[type], type]:
     """Decorator to register an AgentType.
 
     Usage:
-        @agenttype(AgentConfig(name="dictate", trigger=[62, 62], toolsets=["default"]))
+        @agenttype(AgentConfig(name="dictate", trigger=165, toolsets=["default"]))
         class DictateAgent:
             pass
     """

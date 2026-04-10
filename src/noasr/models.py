@@ -57,9 +57,15 @@ class AgentConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AgentConfig":
         """Create agent config from dictionary with safe defaults."""
+        raw_trigger = data.get("trigger", 0)
+        if isinstance(raw_trigger, list):
+            raise ValueError(
+                f"Agent 'trigger' must be a single integer (virtual key code), "
+                f"got list {raw_trigger}. Update your config.json."
+            )
         return cls(
             name=data.get("name", ""),
-            trigger=int(data.get("trigger", 0)),
+            trigger=int(raw_trigger),
             toolsets=data.get("toolsets", []),
             system_prompt_file=data.get("system_prompt_file", "input_system_prompt.md"),
             user_prompt_file=data.get("user_prompt_file", "input_user_prompt.md"),

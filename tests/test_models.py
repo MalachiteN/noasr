@@ -117,6 +117,16 @@ class TestAgentConfig:
         assert agent.trigger == 165
         assert agent.toolsets == ["default"]
 
+    def test_from_dict_rejects_list_trigger(self) -> None:
+        """Test that from_dict raises ValueError for list trigger."""
+        data = {
+            "name": "dictate",
+            "trigger": [62, 62],
+            "toolsets": ["default"],
+        }
+        with pytest.raises(ValueError, match="must be a single integer"):
+            models.AgentConfig.from_dict(data)
+
 
 class TestRuntimeState:
     """Test RuntimeState enum."""

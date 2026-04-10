@@ -145,5 +145,8 @@ Thumbs.db
 # Sisyphus local state
 .sisyphus/ralph-loop.local.md
 
+# Mutsumi
+.mutsumi/
+
 # Virtual environment
 .venv/

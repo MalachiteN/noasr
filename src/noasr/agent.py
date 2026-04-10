@@ -77,6 +77,7 @@ class AgentManager:
         name: str,
         audio_data_uri: str,
         client: Any,
+        thinking_type: str = "disabled",
     ) -> str:
         """Run an agent with the ReAct loop.
 
@@ -88,6 +89,7 @@ class AgentManager:
             name: Agent name to run.
             audio_data_uri: Base64 data URI of the recorded audio.
             client: MiMoClient instance with a send() method.
+            thinking_type: 'enabled' or 'disabled' — controls model thinking.
 
         Returns:
             Final assistant text content string.
@@ -120,7 +122,9 @@ class AgentManager:
         tools = agent.get_tools() if agent.has_tools() else None
 
         # Send initial request (MiMoClient.send() handles logging)
-        response = client.send(messages=messages, tools=tools)
+        response = client.send(
+            messages=messages, tools=tools, thinking_type=thinking_type
+        )
 
         # ReAct loop
         max_iterations = 20  # Safety limit
@@ -188,7 +192,9 @@ class AgentManager:
                 messages.append(tool_result_msg)
 
             # Send next request with updated messages
-            response = client.send(messages=messages, tools=tools)
+            response = client.send(
+                messages=messages, tools=tools, thinking_type=thinking_type
+            )
 
         # Safety: if we exceeded max iterations
         return ""

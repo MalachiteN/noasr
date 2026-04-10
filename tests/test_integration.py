@@ -262,8 +262,9 @@ class TestE2EReActToolLoop:
             },
         ]
 
-        # Set active agent
+        # Set active agent and config
         runtime._active_agent = agent_manager.get_agent("dictate")
+        runtime._config = AppConfig(thinking_type="disabled")
 
         # Run _process_recording
         with mock.patch("noasr.agent.load_agent_prompts", return_value=("sys", "user")):

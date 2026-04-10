@@ -105,6 +105,7 @@ class MiMoClient:
         tool_choice: str | None = None,
         model: str = "xiaomi/mimo-v2-omni",
         max_completion_tokens: int = 1024,
+        thinking_type: str = "disabled",
     ) -> dict[str, Any]:
         """Send a chat completion request and return raw response dict.
 
@@ -114,6 +115,7 @@ class MiMoClient:
             tool_choice: Optional tool choice strategy.
             model: Model identifier.
             max_completion_tokens: Maximum tokens to generate.
+            thinking_type: 'enabled' or 'disabled' — controls model thinking.
 
         Returns:
             Raw response dict with 'choices' key.
@@ -133,6 +135,10 @@ class MiMoClient:
             kwargs["tool_choice"] = "auto"
         elif tool_choice is not None:
             kwargs["tool_choice"] = tool_choice
+
+        # Pass thinking configuration via extra_body (non-standard API param)
+        if thinking_type in ("enabled", "disabled"):
+            kwargs["extra_body"] = {"thinking": {"type": thinking_type}}
 
         # Log request
         self._log_request(kwargs)

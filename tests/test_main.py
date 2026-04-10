@@ -451,7 +451,10 @@ class TestProcessRecording:
         runtime._process_recording("data:audio/wav;base64,AAAA")
 
         mocks["agent_manager"].run_agent.assert_called_once_with(
-            "dictate", "data:audio/wav;base64,AAAA", mocks["client"]
+            "dictate",
+            "data:audio/wav;base64,AAAA",
+            mocks["client"],
+            thinking_type="disabled",
         )
         mocks["regex"].apply.assert_called_once_with("Hello world")
         mocks["injector"].inject.assert_called_once_with("Hello world")

@@ -90,7 +90,23 @@ class TestAppConfig:
 
         assert config.baseurl == "https://api.mi-fds.com/v1"  # default
         assert config.api_key == "only-this"
+        assert config.thinking_type == "disabled"  # default
         assert config.toolsets == {}  # default
+
+    def test_from_dict_invalid_thinking_type_raises(self) -> None:
+        """Test that from_dict raises ValueError for invalid thinking_type."""
+        with pytest.raises(ValueError, match="Invalid thinking_type"):
+            models.AppConfig.from_dict({"thinking_type": "maybe"})
+
+    def test_from_dict_valid_thinking_type_enabled(self) -> None:
+        """Test that from_dict accepts thinking_type='enabled'."""
+        config = models.AppConfig.from_dict({"thinking_type": "enabled"})
+        assert config.thinking_type == "enabled"
+
+    def test_from_dict_valid_thinking_type_disabled(self) -> None:
+        """Test that from_dict accepts thinking_type='disabled'."""
+        config = models.AppConfig.from_dict({"thinking_type": "disabled"})
+        assert config.thinking_type == "disabled"
 
 
 class TestAgentConfig:

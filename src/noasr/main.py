@@ -207,7 +207,10 @@ class NoasrRuntime:
             return
 
         final_text = self._agent_manager.run_agent(
-            self._active_agent.name, audio_data_uri, self._client
+            self._active_agent.name,
+            audio_data_uri,
+            self._client,
+            thinking_type=self._config.thinking_type,
         )
 
         # Apply regex transformations

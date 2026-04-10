@@ -31,16 +31,24 @@ class AppConfig:
     baseurl: str = "https://api.mi-fds.com/v1"
     api_key: str = ""
     tavily_api_key: str = ""
+    thinking_type: str = "disabled"
     toolsets: dict[str, list[str]] = field(default_factory=dict)
     agents: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AppConfig":
         """Create config from dictionary with safe defaults."""
+        thinking_type = data.get("thinking_type", "disabled")
+        if thinking_type not in ("enabled", "disabled"):
+            raise ValueError(
+                f"Invalid thinking_type '{thinking_type}'. "
+                f"Must be 'enabled' or 'disabled'."
+            )
         return cls(
             baseurl=data.get("baseurl", "https://api.mi-fds.com/v1"),
             api_key=data.get("api_key", ""),
             tavily_api_key=data.get("tavily_api_key", ""),
+            thinking_type=thinking_type,
             toolsets=data.get("toolsets", {}),
             agents=data.get("agents", []),
         )

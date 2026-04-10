@@ -2,6 +2,7 @@
   "baseurl": "https://api.mi-fds.com/v1",
   "api_key": "YOUR_API_KEY_HERE",
   "tavily_api_key": "YOUR_TAVILY_API_KEY_HERE",
+  "thinking_type": "disabled",
   "toolsets": {
     "default": ["GetCurrentDateTime", "TavilySearch"]
   },

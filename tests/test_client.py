@@ -24,6 +24,7 @@ class MockTransport:
         max_completion_tokens: int,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> ChatCompletion:
         """Record call and return mock response."""
         call = {
@@ -32,6 +33,7 @@ class MockTransport:
             "max_completion_tokens": max_completion_tokens,
             "tools": tools,
             "tool_choice": tool_choice,
+            "extra_body": extra_body,
         }
         self._calls.append(call)
 

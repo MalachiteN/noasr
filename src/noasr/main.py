@@ -66,10 +66,22 @@ class NoasrRuntime:
 
         # Initialize tool manager and register built-in tools
         from noasr.tools.datetime import GetCurrentDateTime
+        from noasr.tools.tavily import TavilySearch
 
         self._tool_manager = ToolManager.get_instance()
         if "GetCurrentDateTime" not in self._tool_manager.list_tools():
             self._tool_manager.register_tool(GetCurrentDateTime())
+
+        # Register TavilySearch if API key is configured
+        tavily_key = self._config.tavily_api_key
+        if tavily_key and tavily_key != "YOUR_TAVILY_API_KEY_HERE":
+            if "TavilySearch" not in self._tool_manager.list_tools():
+                self._tool_manager.register_tool(TavilySearch(api_key=tavily_key))
+        else:
+            print(
+                "Note: TavilySearch not available — set tavily_api_key in config",
+                file=sys.stderr,
+            )
 
         # Register toolsets from config
         toolsets = self._config.toolsets

@@ -30,6 +30,7 @@ class AppConfig:
 
     baseurl: str = "https://api.mi-fds.com/v1"
     api_key: str = ""
+    tavily_api_key: str = ""
     toolsets: dict[str, list[str]] = field(default_factory=dict)
     agents: list[dict[str, Any]] = field(default_factory=list)
 
@@ -39,6 +40,7 @@ class AppConfig:
         return cls(
             baseurl=data.get("baseurl", "https://api.mi-fds.com/v1"),
             api_key=data.get("api_key", ""),
+            tavily_api_key=data.get("tavily_api_key", ""),
             toolsets=data.get("toolsets", {}),
             agents=data.get("agents", []),
         )

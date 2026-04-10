@@ -1,5 +1,5 @@
 {
-  "baseurl": "https://api.mi-fds.com/v1",
+  "baseurl": "https://api.xiaomimimo.com/v1",
   "api_key": "YOUR_API_KEY_HERE",
   "tavily_api_key": "YOUR_TAVILY_API_KEY_HERE",
   "thinking_type": "disabled",
@@ -9,10 +9,17 @@
   "agents": [
     {
       "name": "dictate",
-      "trigger": 165,
+      "trigger": 163,
       "toolsets": ["default"],
       "system_prompt_file": "input_system_prompt.md",
       "user_prompt_file": "input_user_prompt.md"
+    },
+    {
+      "name": "transcript",
+      "trigger": 165,
+      "toolsets": [],
+      "system_prompt_file": "transcript_system_prompt.md",
+      "user_prompt_file": "transcript_user_prompt.md"
     }
   ]
 }

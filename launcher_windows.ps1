@@ -1,0 +1,1 @@
+powershell -WindowStyle Hidden -Command "Start-Process -WindowStyle Hidden -FilePath '.\.venv\Scripts\pythonw.exe' -ArgumentList '-m','noasr'"

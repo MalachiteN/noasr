@@ -30,7 +30,7 @@ PLATFORM_WARNINGS = {
 }
 
 # Default config values
-DEFAULT_BASEURL = "https://api.mi-fds.com/v1"
+DEFAULT_BASEURL = "https://api.xiaomimimo.com/v1"
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_MODEL = "xiaomi/mimo-v2-omni"
 

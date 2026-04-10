@@ -22,6 +22,7 @@ class MiMoTransport(Protocol):
         max_completion_tokens: int,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> ChatCompletion:
         """Create a chat completion."""
         ...
@@ -47,6 +48,7 @@ class OpenAiTransport:
         max_completion_tokens: int,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> ChatCompletion:
         """Create a chat completion via OpenAI API."""
         kwargs: dict[str, Any] = {
@@ -58,6 +60,8 @@ class OpenAiTransport:
             kwargs["tools"] = tools
         if tool_choice is not None:
             kwargs["tool_choice"] = tool_choice
+        if extra_body is not None:
+            kwargs["extra_body"] = extra_body
 
         return self._client.chat.completions.create(**kwargs)
 
